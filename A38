@@ -1,6 +1,6 @@
--- Luau | glx_aimbot_v3_8.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v3_9.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v3.8 — CLEAN-CODE BUILD)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v3.9 — TRACK STABILITY BUILD)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -9,8 +9,7 @@ local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
--- [v3.8] ตัวกลาง Logging
-local LOG_PREFIX = "[GLX v3.8]"
+local LOG_PREFIX = "[GLX v3.9]"
 local function log(level, msg)
         local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
         if level == "INFO" then
@@ -102,7 +101,7 @@ local State = {
         TrackBoost = 1.5,
         LagComp = true,
         DragSwitch = true,
-        FlickSpeed = 90,
+        FlickSpeed = 75,
         FreeSteer = true,
         SwitchAssist = true,
         WeaponCheck = true,
@@ -113,7 +112,7 @@ local State = {
         BulletSpeed = 5000,
         BulletGravity = workspace.Gravity,
         Smoothness = 1,
-        FOV = 150,
+        FOV = 100,
         ShowFOV = false,
         ESP = true,
         ESPName = true
@@ -126,6 +125,11 @@ local AIM_PROJECTION_DIST = 10000
 local MAX_TRACK_DPS = 70
 local MAX_STEP_BASE = 120
 local MAX_STEP_SPAN = 240
+local DES_ANG_TAU = 0.08
+local DES_ANG_MAX_DPS = 400
+local TRACK_MARGIN = 1.25
+local AIM_MICRO_SMOOTH_DEG = 0.4
+local AIM_MICRO_MIN = 0.3
 local WATCHDOG_TIMEOUT = 2
 
 local function getCamera() return Workspace.CurrentCamera end
@@ -163,7 +167,7 @@ local function safeUnit(v3)
 end
 
 -- ==========================================
--- 3.5 FORWARD DECLARATIONS + LOAD STATUS
+-- 3.5 FORWARD DECLARATIONS + LOAD STATUS (v3.1)
 -- ==========================================
 local WeaponService
 local setStickyStatus
@@ -175,8 +179,9 @@ local function setGlxStatus(msg)
                 pcall(setStatusFn, tostring(msg))
         end
 end
+
 -- ==========================================
--- 3.6 UI CONSTRUCTION
+-- 3.6 UI CONSTRUCTION (v3.1 — สร้าง UI "ก่อน" ระบบอื่นทั้งหมด)
 -- ==========================================
 local THEME = {
         Accent = Color3.fromRGB(0, 255, 153),
@@ -197,7 +202,6 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Glx_UI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.DisplayOrder = 999999
-
 do
         local parents = {}
         if type(gethui) == "function" then
@@ -704,7 +708,6 @@ end
 -- 5. VISIBILITY SERVICE (Reuse RaycastParams)
 -- ==========================================
 local VisibilityService = {}
-
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
 RayParams.IgnoreWater = true
@@ -821,16 +824,17 @@ CleanupManager:AddConn("PlayerRemovingCaches", Players.PlayerRemoving:Connect(fu
         PlayerCache[player] = nil
 end))
 
-local TARGET_GRACE = 0.25
+local TARGET_GRACE = 0.35
 local KEEP_HYSTERESIS = 1.35
 local ZOOM_TAU = 0.08
 local targetGraceUntil = 0
 local zoomSmoothed = nil
 
 local SWITCH_COOLDOWN = 0.30
+local FLICK_SWITCH_COOLDOWN = 0.45
 local switchAwayPlayer = nil
 local switchCooldownUntil = 0
-local SWITCH_RATIO = 0.50
+local SWITCH_RATIO = 0.60
 local SWITCH_CHECK_INTERVAL = 0.05
 local lastSwitchCheck = 0
 
@@ -949,7 +953,7 @@ function TargetService:CheckSwitch(camera, screenCenter, scaledFOV)
         local bestPlayer, bestPart = findBestCandidate(self, camera, screenCenter, scaledFOV, limit, target)
         if bestPlayer then
                 switchAwayPlayer = target
-                switchCooldownUntil = now + SWITCH_COOLDOWN
+                switchCooldownUntil = now + FLICK_SWITCH_COOLDOWN
                 self.CurrentTarget = bestPlayer
                 self.TargetPart = bestPart
                 self.LockedPartName = nil
@@ -1015,6 +1019,7 @@ local function getTargetAcceleration(kinPart, targetVel, currentTime)
                 local outVel = state and state.smoothedVelocity
                 return Vector3.zero, (isFiniteVec3(outVel) and outVel) or Vector3.zero
         end
+
         if state then
                 if not isFiniteVec3(state.smoothedVelocity) then state.smoothedVelocity = targetVel end
                 if not isFiniteVec3(state.smoothedAcceleration) then state.smoothedAcceleration = Vector3.zero end
@@ -1071,7 +1076,6 @@ local function getTargetAcceleration(kinPart, targetVel, currentTime)
         end
 
         local rawAcceleration = dv / dt
-
         state.smoothedVelocity = state.smoothedVelocity:Lerp(targetVel, 1 - math.exp(-dt / VEL_TAU))
 
         local tau = ACCEL_TAU_BASE / math.clamp(State.PredReactivity or 1.0, 0.2, 3)
@@ -1098,7 +1102,6 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
         local kinPart = getKinematicPart(targetPart)
         local targetAcc, targetVel = getTargetAcceleration(kinPart, kinPart.AssemblyLinearVelocity, currentTime)
         local pingOffset = (State.PingCompensation and (getPing() * 0.5) or 0) + (leadTime or 0)
-
         local accelLeadCap = MAX_ACCEL_LEAD / (zoomScale or getZoomScale(getCamera()))
 
         local function f(t)
@@ -1186,7 +1189,6 @@ local function getPredictedPosition(targetPart, shooterPos, deltaTime, leadTime,
 
         return targetPos
 end
-
 -- ==========================================
 -- 8. ESP SERVICE (Throttle 30Hz, Ref-Cached)
 -- ==========================================
@@ -1454,18 +1456,21 @@ log("INFO", "โหลดสำเร็จ — aimbot + ESP + self-heal watchdo
 
 local flickUntil = 0
 local flickArmStart = nil
-local FLICK_ARM = 0.06
+local FLICK_ARM = 0.045
 local prevReadLook = nil
 local lastWriteLook = nil
-local FLICK_HOLD = 0.10
+local FLICK_HOLD = 0.14
 local STEER_DPS = 30
-local STEER_HOLD = 0.22
+local STEER_HOLD = 0.18
 local STEER_MIN_INFLUENCE = 0.15
 local STEER_TAU = 0.07
 
 local steerInfluence = 1
 local steerHoldStart = nil
 local prevErrDeg = nil
+local prevDesiredDir = nil
+local desSmoothed = 0
+local lastAimWriteClock = 0
 
 local lastRenderTick = os.clock()
 local renderErrStreak = 0
@@ -1495,10 +1500,26 @@ local function renderTick(deltaTime)
                 end
         end
         if userDps == math.huge then userDps = 0 end
+        local handAxisRaw = nil
+        if lastWriteLook then
+                handAxisRaw = lastWriteLook:Cross(userLook)
+        elseif prevReadLook then
+                handAxisRaw = prevReadLook:Cross(userLook)
+        end
         prevReadLook = userLook
         lastWriteLook = nil
 
-        if State.DragSwitch and userDps > (State.FlickSpeed or 140) then
+        local handAway = true
+        local gatePart = TargetService.TargetPart
+        if gatePart and gatePart.Parent then
+                local toTarget = safeUnit(gatePart.Position - camera.CFrame.Position)
+                local aimAxis = toTarget and safeUnit(userLook:Cross(toTarget))
+                local handAxis = handAxisRaw and safeUnit(handAxisRaw)
+                if aimAxis and handAxis then
+                        handAway = handAxis:Dot(aimAxis) < 0
+                end
+        end
+        if State.DragSwitch and handAway and userDps > (State.FlickSpeed or 140) then
                 if not flickArmStart then flickArmStart = os.clock() end
                 if os.clock() - flickArmStart >= FLICK_ARM then
                         flickUntil = os.clock() + FLICK_HOLD
@@ -1537,7 +1558,7 @@ local function renderTick(deltaTime)
         if State.DragSwitch and os.clock() < flickUntil then
                 if TargetService.CurrentTarget then
                         switchAwayPlayer = TargetService.CurrentTarget
-                        switchCooldownUntil = os.clock() + SWITCH_COOLDOWN
+                        switchCooldownUntil = os.clock() + FLICK_SWITCH_COOLDOWN
                         TargetService:ReleaseTarget()
                 end
                 steerInfluence = 1
@@ -1582,10 +1603,8 @@ local function renderTick(deltaTime)
         local targetPart = TargetService.TargetPart
         if TargetService.CurrentTarget and targetPart and targetPart.Parent then
                 local shooterPos = camera.CFrame.Position
-
                 local zoomScale = zoomSmoothed
                 local baseRate = (10 + State.Smoothness * 30) * zoomScale
-
                 local leadTau = State.LagComp and math.min(1 / baseRate, 0.15) or 0
                 local targetPos = getPredictedPosition(targetPart, shooterPos, deltaTime, leadTau, zoomScale)
 
@@ -1595,19 +1614,49 @@ local function renderTick(deltaTime)
                         local errDeg = math.deg(math.acos(dot))
                         local errScaled = errDeg * zoomScale
                         local gain = State.TrackBoost or 1.5
-                        local effSpeed = math.min(baseRate + errScaled * gain, MAX_TRACK_DPS)
+
+                        if os.clock() - lastAimWriteClock > 0.1 then
+                                prevDesiredDir = nil
+                                desSmoothed = 0
+                        end
+                        local desAngDps = 0
+                        if prevDesiredDir then
+                                local dDot = math.clamp(prevDesiredDir:Dot(desiredDirection), -1, 1)
+                                if dDot < 0.9999995 then
+                                        desAngDps = math.deg(math.acos(dDot)) / dtSafe
+                                end
+                        end
+                        prevDesiredDir = desiredDirection
+                        desSmoothed += (desAngDps - desSmoothed) * (1 - math.exp(-dtSafe / DES_ANG_TAU))
+                        desSmoothed = math.min(desSmoothed, DES_ANG_MAX_DPS)
+                        local trackCap = math.max(MAX_TRACK_DPS, desSmoothed * TRACK_MARGIN)
+                        local effSpeed = math.min(baseRate + errScaled * gain, trackCap)
                         local sdt = math.min(deltaTime, 1 / 30)
                         local alpha = 1 - math.exp(-effSpeed * sdt)
+
+                        if errDeg < AIM_MICRO_SMOOTH_DEG then
+                                alpha *= AIM_MICRO_MIN + (1 - AIM_MICRO_MIN) * (errDeg / AIM_MICRO_SMOOTH_DEG)
+                        end
+
                         local maxStepDps = (MAX_STEP_BASE + State.Smoothness * MAX_STEP_SPAN) * zoomScale
                         alpha = math.min(alpha, (maxStepDps * sdt) / math.max(errDeg, 0.05))
 
+                        local handAssisting = false
+                        if handAxisRaw then
+                                local aimAxis = safeUnit(userLook:Cross(desiredDirection))
+                                local handAxis = safeUnit(handAxisRaw)
+                                if aimAxis and handAxis and handAxis:Dot(aimAxis) > 0 then
+                                        handAssisting = true
+                                end
+                        end
                         local steering = State.FreeSteer and userDps > STEER_DPS
                                 and prevErrDeg ~= nil and errDeg > prevErrDeg + 0.05
+                                and not handAssisting
                         if steering then
                                 if not steerHoldStart then steerHoldStart = os.clock() end
                                 if State.DragSwitch and os.clock() - steerHoldStart >= STEER_HOLD then
                                         switchAwayPlayer = TargetService.CurrentTarget
-                                        switchCooldownUntil = os.clock() + SWITCH_COOLDOWN
+                                        switchCooldownUntil = os.clock() + FLICK_SWITCH_COOLDOWN
                                         TargetService:ReleaseTarget()
                                         flickUntil = os.clock() + FLICK_HOLD
                                         return
@@ -1626,11 +1675,13 @@ local function renderTick(deltaTime)
                                 if ok and newCFrame then
                                         camera.CFrame = newCFrame
                                         lastWriteLook = smoothDirection
+                                        lastAimWriteClock = os.clock()
                                 end
                         end
                         prevErrDeg = errDeg
                 end
         end
+
 end
 
 local function connectRenderLoop()
