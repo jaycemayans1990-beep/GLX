@@ -1,6 +1,6 @@
--- Luau | glx_aimbot_v3_9.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v4_1.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v3.9 — TRACK STABILITY BUILD)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.1 — TRIGGER FLOAT BUTTON)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -9,7 +9,7 @@ local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
-local LOG_PREFIX = "[GLX v3.9]"
+local LOG_PREFIX = "[GLX v4.1]"
 local function log(level, msg)
         local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
         if level == "INFO" then
@@ -104,7 +104,7 @@ local State = {
         FlickSpeed = 75,
         FreeSteer = true,
         SwitchAssist = true,
-        WeaponCheck = true,
+        WeaponCheck = false,
         TargetPartMode = "Head",
         PingCompensation = true,
         DropIsMultiplier = true,
@@ -115,7 +115,10 @@ local State = {
         FOV = 100,
         ShowFOV = false,
         ESP = true,
-        ESPName = true
+        ESPName = true,
+        TriggerBot = false,
+        TriggerToggleKey = Enum.KeyCode.T,
+        TriggerRadius = 14
 }
 
 local BAN_OVERRIDE_RATIO = 0.12
@@ -131,6 +134,11 @@ local TRACK_MARGIN = 1.25
 local AIM_MICRO_SMOOTH_DEG = 0.4
 local AIM_MICRO_MIN = 0.3
 local WATCHDOG_TIMEOUT = 2
+
+local TRIGGER_TAP_MIN = 0.05
+local TRIGGER_TAP_MAX = 0.15
+local TRIGGER_GAP = 0.07
+local TRIGGER_RADIUS_DEFAULT = 14
 
 local function getCamera() return Workspace.CurrentCamera end
 
@@ -334,6 +342,91 @@ end)
 
 enableDrag(ToggleBtn, ToggleBtn)
 enableDrag(TitleBar, MainFrame)
+
+local TRIGGER_FLOAT_SIZE = 40
+local TRIGGER_FLOAT_X = 28
+local TRIGGER_FLOAT_Y = 185
+local TRIGGER_DRAG_CANCEL_PX = 6
+
+local TriggerFloatGui = Instance.new("ScreenGui")
+TriggerFloatGui.Name = "Glx_TriggerFloat"
+TriggerFloatGui.ResetOnSpawn = false
+TriggerFloatGui.DisplayOrder = 999999
+do
+        local parents = {}
+        if type(gethui) == "function" then
+                local okH, h = pcall(gethui)
+                if okH and h then table.insert(parents, h) end
+        end
+        pcall(function() table.insert(parents, game:GetService("CoreGui")) end)
+        if LocalPlayer then
+                pcall(function()
+                        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                        if pg then table.insert(parents, pg) end
+                end)
+        end
+        for _, par in ipairs(parents) do
+                local okP = pcall(function() TriggerFloatGui.Parent = par end)
+                if okP and TriggerFloatGui.Parent ~= nil then break end
+        end
+end
+CleanupManager:AddInstance("TriggerFloatUI", TriggerFloatGui)
+
+local TriggerFloatBtn = Instance.new("TextButton")
+TriggerFloatBtn.Size = UDim2.new(0, TRIGGER_FLOAT_SIZE, 0, TRIGGER_FLOAT_SIZE)
+TriggerFloatBtn.Position = UDim2.new(0, TRIGGER_FLOAT_X, 0, TRIGGER_FLOAT_Y)
+TriggerFloatBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+TriggerFloatBtn.Text = "TRG"
+TriggerFloatBtn.TextColor3 = THEME.TextDim
+TriggerFloatBtn.Font = Enum.Font.GothamBold
+TriggerFloatBtn.TextSize = 13
+TriggerFloatBtn.Active = true
+TriggerFloatBtn.Parent = TriggerFloatGui
+
+local floatCorner = Instance.new("UICorner")
+floatCorner.CornerRadius = UDim.new(0, 8)
+floatCorner.Parent = TriggerFloatBtn
+
+local floatStroke = Instance.new("UIStroke")
+floatStroke.Color = THEME.Stroke
+floatStroke.Thickness = 2
+floatStroke.Parent = TriggerFloatBtn
+
+local function updateTriggerFloatVisual()
+        if State.TriggerBot then
+                floatStroke.Color = THEME.Accent
+                TriggerFloatBtn.TextColor3 = THEME.Accent
+        else
+                floatStroke.Color = THEME.Stroke
+                TriggerFloatBtn.TextColor3 = THEME.TextDim
+        end
+end
+
+local floatPressPos, floatMoved = nil, false
+CleanupManager:AddConn("TrigFloatBegan", TriggerFloatBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                floatPressPos = input.Position
+                floatMoved = false
+        end
+end))
+CleanupManager:AddConn("TrigFloatMoved", UserInputService.InputChanged:Connect(function(input)
+        if floatPressPos and (input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch) then
+                if (input.Position - floatPressPos).Magnitude > TRIGGER_DRAG_CANCEL_PX then
+                        floatMoved = true
+                end
+        end
+end))
+
+CleanupManager:AddConn("TrigFloatClick", TriggerFloatBtn.MouseButton1Click:Connect(function()
+        if floatMoved then return end
+        State.TriggerBot = not State.TriggerBot
+        updateTriggerFloatVisual()
+        log("INFO", "Trigger Bot " .. (State.TriggerBot and "ON" or "OFF") .. " (แตะปุ่มลอย TRG)")
+end))
+
+enableDrag(TriggerFloatBtn, TriggerFloatBtn)
 
 local ScrollFrame = Instance.new("ScrollingFrame")
 ScrollFrame.Size = UDim2.new(1, -10, 1, -62)
@@ -1452,7 +1545,7 @@ local function hasActiveWeapon()
         return character:FindFirstChildOfClass("Tool") ~= nil
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + self-heal watchdog (ไม่มี hook / ไม่มี input สังเคราะห์)")
+log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog (ไม่มี hook เกม — input สังเคราะห์เฉพาะคลิกของ Trigger Bot, default OFF — แตะปุ่มลอย TRG หรือกด T เปิด)")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1472,11 +1565,167 @@ local prevDesiredDir = nil
 local desSmoothed = 0
 local lastAimWriteClock = 0
 
+-- ==========================================
+-- [v4.0] TRIGGER BOT — ยิงอัตโนมัติเมื่อจุดเล็งลงบนเป้าที่ล็อค (ทั้งระบบ "นอก UI")
+-- ==========================================
+local firePress, fireRelease, fireName = nil, nil, nil
+do
+        if type(mouse1press) == "function" and type(mouse1release) == "function" then
+                firePress, fireRelease, fireName = mouse1press, mouse1release, "mouse1press"
+        else
+                local okVim, vim = pcall(function() return game:GetService("VirtualInputManager") end)
+                if okVim and vim then
+                        fireName = "VirtualInputManager"
+                        local function sendMouseButton(down)
+                                local cam = getCamera()
+                                if not cam then return end
+                                local vp = cam.ViewportSize
+                                vim:SendMouseButtonEvent(vp.X * 0.5, vp.Y * 0.5, 0, down, game, 1)
+                        end
+                        firePress = function() sendMouseButton(true) end
+                        fireRelease = function() sendMouseButton(false) end
+                else
+                        local okVu, vu = pcall(function() return game:GetService("VirtualUser") end)
+                        if okVu and vu then
+                                fireName = "VirtualUser"
+                                firePress = function()
+                                        vu:CaptureController()
+                                        local cam = getCamera()
+                                        vu:Button1Down(Vector2.new(), cam and cam.CFrame or CFrame.new())
+                                end
+                                fireRelease = function()
+                                        vu:CaptureController()
+                                        local cam = getCamera()
+                                        vu:Button1Up(Vector2.new(), cam and cam.CFrame or CFrame.new())
+                                end
+                        end
+                end
+        end
+end
+if firePress then
+        log("INFO", "Trigger Bot backend: " .. fireName)
+else
+        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก (mouse1press/VIM/VirtualUser) — ฟีเจอร์นี้ใช้ไม่ได้ ระบบอื่นปกติ")
+end
+
+local function triggerDecision(now, onTarget, pressed, pressStart, lastRelease)
+        if pressed then
+                local held = now - pressStart
+                if (not onTarget and held >= TRIGGER_TAP_MIN) or held >= TRIGGER_TAP_MAX then
+                        return "release"
+                end
+                return "hold"
+        end
+        if not onTarget then return "wait" end
+        if now - lastRelease < TRIGGER_GAP then return "wait" end
+        return "press"
+end
+
+local TriggerBot = { pressed = false, pressStart = 0, lastRelease = 0, fireBroken = false }
+
+local triggerBadge
+do
+        local okBadge, badge = pcall(function() return Drawing.new("Text") end)
+        if okBadge and badge then
+                badge.Text = "TRIGGER ON"
+                badge.Size = 13
+                badge.Center = true
+                badge.Outline = true
+                badge.OutlineColor = Color3.fromRGB(0, 0, 0)
+                badge.Color = Color3.fromRGB(120, 220, 130)
+                badge.Position = Vector2.new(0, 26)
+                badge.Visible = false
+                CleanupManager:AddDrawing("TriggerBadge", badge)
+                triggerBadge = badge
+        end
+end
+
+local TRIGGER_BADGE_Y = 26
+
+function TriggerBot.update(camera)
+        local rt = TriggerBot
+        local now = os.clock()
+
+        local active = State.TriggerBot and State.Aimbot and firePress ~= nil
+                and not rt.fireBroken and hasActiveWeapon()
+                and now >= flickUntil
+
+        local onTarget = false
+        if active then
+                local part = TargetService.TargetPart
+                if part and part.Parent and TargetService.CurrentTarget then
+                        local sp, onScreen = camera:WorldToViewportPoint(part.Position)
+                        if onScreen and sp.Z > 0 then
+                                local vp = camera.ViewportSize
+                                local radiusPx = (State.TriggerRadius or TRIGGER_RADIUS_DEFAULT) * (vp.Y / 1080)
+                                local dx = sp.X - vp.X * 0.5
+                                local dy = sp.Y - vp.Y * 0.5
+                                onTarget = dx * dx + dy * dy <= radiusPx * radiusPx
+                        end
+                end
+        end
+
+        if rt.pressed and not active then
+                rt.pressed = false
+                rt.lastRelease = now
+                pcall(fireRelease)
+        end
+
+        local action = triggerDecision(now, onTarget, rt.pressed, rt.pressStart, rt.lastRelease)
+        if action == "press" then
+                if pcall(firePress) then
+                        rt.pressed = true
+                        rt.pressStart = now
+                else
+                        rt.fireBroken = true
+                        rt.pressed = false
+                        log("ERROR", "Trigger Bot: ส่งคลิกไม่สำเร็จ (" .. tostring(fireName) .. ") — ปิด trigger ชั่วคราว")
+                        if setStickyStatus then
+                                setStickyStatus("trigger bot: ส่งคลิกไม่สำเร็จ")
+                        end
+                end
+        elseif action == "release" then
+                pcall(fireRelease)
+                rt.pressed = false
+                rt.lastRelease = now
+        end
+
+        if triggerBadge then
+                local want = State.TriggerBot and not rt.fireBroken
+                if want ~= triggerBadge.Visible then
+                        triggerBadge.Visible = want
+                end
+                if triggerBadge.Visible then
+                        local vp = camera.ViewportSize
+                        triggerBadge.Position = Vector2.new(vp.X * 0.5, TRIGGER_BADGE_Y)
+                        local firing = rt.pressed
+                        local newColor = firing and Color3.fromRGB(255, 90, 90) or Color3.fromRGB(120, 220, 130)
+                        local newText = firing and "TRIGGER — ยิง" or "TRIGGER ON"
+                        if triggerBadge.Color ~= newColor then triggerBadge.Color = newColor end
+                        if triggerBadge.Text ~= newText then triggerBadge.Text = newText end
+                end
+        end
+end
+
+CleanupManager:AddConn("TriggerKeybind", UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        local wantKey = State.TriggerToggleKey or Enum.KeyCode.T
+        if input.KeyCode == wantKey then
+                State.TriggerBot = not State.TriggerBot
+                if updateTriggerFloatVisual then updateTriggerFloatVisual() end
+                log("INFO", "Trigger Bot " .. (State.TriggerBot and "ON" or "OFF")
+                        .. " (toggle ด้วยปุ่ม " .. wantKey.Name .. ")")
+        end
+end))
+
 local lastRenderTick = os.clock()
 local renderErrStreak = 0
 local function renderTick(deltaTime)
         local camera = getCamera()
         if not camera then return end
+
+        TriggerBot.update(camera)
 
         local userLook = camera.CFrame.LookVector
         local dtSafe = math.max(deltaTime, 1e-4)
@@ -1786,6 +2035,15 @@ do
 
         expect("bulletSpeed <= 0 = nil",
                 solveInterceptVector(Vector3.zero, fakeTarget, 0, Vector3.new(0, -196.2, 0), 1 / 60, 0, 1) == nil)
+
+        expect("บนเป้า + พ้น gap = กด", triggerDecision(1.0, true, false, 0, 0.90) == "press")
+        expect("บนเป้าแต่ยังใน gap = รอ", triggerDecision(1.0, true, false, 0, 0.98) == "wait")
+        expect("กดค้างบนเป้ายังไม่ถึงขั้นต่ำ = กดต่อ", triggerDecision(1.0, true, true, 0.98, 0.90) == "hold")
+        expect("หลุดเป้าขณะกดครบขั้นต่ำ = ปล่อย", triggerDecision(1.0, false, true, 0.90, 0.80) == "release")
+        expect("หลุดเป้าแต่กดสั้นเกินขั้นต่ำ = กดต่อ", triggerDecision(1.0, false, true, 0.99, 0.80) == "hold")
+        expect("กดค้างถึงเพดานแม้ยังบนเป้า = ปล่อย", triggerDecision(1.0, true, true, 0.80, 0.70) == "release")
+        expect("ไม่บนเป้าและไม่กด = รอ", triggerDecision(1.0, false, false, 0, 0) == "wait")
+        expect("เพิ่งปล่อยยังไม่ถึง gap = รอ", triggerDecision(1.0, true, false, 0, 0.95) == "wait")
 
         log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
 end
