@@ -1,6 +1,6 @@
--- Luau | glx_aimbot_v4_1.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v4_2.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.1 — TRIGGER FLOAT BUTTON)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.2 — MOBILE-SAFE TRIGGER BACKEND)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -9,7 +9,7 @@ local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
-local LOG_PREFIX = "[GLX v4.1]"
+local LOG_PREFIX = "[GLX v4.2]"
 local function log(level, msg)
         local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
         if level == "INFO" then
@@ -118,7 +118,8 @@ local State = {
         ESPName = true,
         TriggerBot = false,
         TriggerToggleKey = Enum.KeyCode.T,
-        TriggerRadius = 14
+        TriggerRadius = 14,
+        TriggerBackend = "Auto"
 }
 
 local BAN_OVERRIDE_RATIO = 0.12
@@ -1513,6 +1514,7 @@ task.spawn(function()
                 end
         end
 end)
+
 -- ==========================================
 -- 9. MAIN CAMERA ENGINE
 -- ==========================================
@@ -1545,7 +1547,7 @@ local function hasActiveWeapon()
         return character:FindFirstChildOfClass("Tool") ~= nil
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog (ไม่มี hook เกม — input สังเคราะห์เฉพาะคลิกของ Trigger Bot, default OFF — แตะปุ่มลอย TRG หรือกด T เปิด)")
+log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog (ไม่มี hook เกม — input สังเคราะห์เฉพาะคลิกของ Trigger Bot [v4.2: มือถืองด VirtualInputManager กันเกมปิดเอง], default OFF — แตะปุ่มลอย TRG หรือกด T เปิด)")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1568,44 +1570,87 @@ local lastAimWriteClock = 0
 -- ==========================================
 -- [v4.0] TRIGGER BOT — ยิงอัตโนมัติเมื่อจุดเล็งลงบนเป้าที่ล็อค (ทั้งระบบ "นอก UI")
 -- ==========================================
-local firePress, fireRelease, fireName = nil, nil, nil
-do
-        if type(mouse1press) == "function" and type(mouse1release) == "function" then
-                firePress, fireRelease, fireName = mouse1press, mouse1release, "mouse1press"
-        else
+local IS_TOUCH = false
+pcall(function()
+        IS_TOUCH = UserInputService.TouchEnabled == true
+                and UserInputService.KeyboardEnabled ~= true
+end)
+
+local function backendOrder(touch, choice)
+        if choice ~= "Press" and choice ~= "VirtualUser" and choice ~= "VIM" then
+                choice = "Auto"
+        end
+        if choice == "Press" then return { "Press" } end
+        if choice == "VirtualUser" then return { "VirtualUser" } end
+        if choice == "VIM" then return { "VIM" } end
+        if touch then return { "VirtualUser", "Press" } end
+        return { "Press", "VIM", "VirtualUser" }
+end
+
+local function makeBackend(name)
+        if name == "Press" then
+                if type(mouse1press) ~= "function" or type(mouse1release) ~= "function" then
+                        return nil
+                end
+                return mouse1press, mouse1release, "mouse1press"
+        end
+        if name == "VIM" then
                 local okVim, vim = pcall(function() return game:GetService("VirtualInputManager") end)
-                if okVim and vim then
-                        fireName = "VirtualInputManager"
-                        local function sendMouseButton(down)
+                if not okVim or not vim then return nil end
+                local function sendMouseButton(down)
+                        local cam = getCamera()
+                        if not cam then return end
+                        local vp = cam.ViewportSize
+                        vim:SendMouseButtonEvent(vp.X * 0.5, vp.Y * 0.5, 0, down, game, 1)
+                end
+                return function() sendMouseButton(true) end, function() sendMouseButton(false) end,
+                        "VirtualInputManager"
+        end
+        if name == "VirtualUser" then
+                local okVu, vu = pcall(function() return game:GetService("VirtualUser") end)
+                if not okVu or not vu then return nil end
+                return function()
+                                vu:CaptureController()
                                 local cam = getCamera()
-                                if not cam then return end
-                                local vp = cam.ViewportSize
-                                vim:SendMouseButtonEvent(vp.X * 0.5, vp.Y * 0.5, 0, down, game, 1)
-                        end
-                        firePress = function() sendMouseButton(true) end
-                        fireRelease = function() sendMouseButton(false) end
-                else
-                        local okVu, vu = pcall(function() return game:GetService("VirtualUser") end)
-                        if okVu and vu then
-                                fireName = "VirtualUser"
-                                firePress = function()
-                                        vu:CaptureController()
-                                        local cam = getCamera()
-                                        vu:Button1Down(Vector2.new(), cam and cam.CFrame or CFrame.new())
-                                end
-                                fireRelease = function()
-                                        vu:CaptureController()
-                                        local cam = getCamera()
-                                        vu:Button1Up(Vector2.new(), cam and cam.CFrame or CFrame.new())
-                                end
-                        end
+                                vu:Button1Down(Vector2.new(), cam and cam.CFrame or CFrame.new())
+                        end, function()
+                                vu:CaptureController()
+                                local cam = getCamera()
+                                vu:Button1Up(Vector2.new(), cam and cam.CFrame or CFrame.new())
+                        end, "VirtualUser"
+        end
+        return nil
+end
+
+local firePress, fireRelease, fireName = nil, nil, nil
+local triggerBackendQueue = {}
+
+local function pickNextBackend(reason)
+        firePress, fireRelease = nil, nil
+        while #triggerBackendQueue > 0 do
+                local name = table.remove(triggerBackendQueue, 1)
+                local press, release, displayName = makeBackend(name)
+                if press then
+                        firePress, fireRelease, fireName = press, release, displayName
+                        log("INFO", "Trigger Bot backend: " .. displayName
+                                .. (reason and (" — " .. reason) or ""))
+                        return true
                 end
         end
+        fireName = nil
+        return false
 end
-if firePress then
-        log("INFO", "Trigger Bot backend: " .. fireName)
-else
-        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก (mouse1press/VIM/VirtualUser) — ฟีเจอร์นี้ใช้ไม่ได้ ระบบอื่นปกติ")
+
+local forcedBackend = State.TriggerBackend
+pcall(function()
+        if type(getgenv) == "function" and type(getgenv()) == "table"
+                and getgenv().GLX_TRIGGER_BACKEND then
+                forcedBackend = getgenv().GLX_TRIGGER_BACKEND
+        end
+end)
+triggerBackendQueue = backendOrder(IS_TOUCH, forcedBackend)
+if not pickNextBackend(IS_TOUCH and "โหมดมือถือ — งด VirtualInputManager" or nil) then
+        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก (VirtualUser/mouse1press/VIM) — ฟีเจอร์นี้ใช้ไม่ได้ ระบบอื่นปกติ")
 end
 
 local function triggerDecision(now, onTarget, pressed, pressStart, lastRelease)
@@ -1621,7 +1666,26 @@ local function triggerDecision(now, onTarget, pressed, pressStart, lastRelease)
         return "press"
 end
 
-local TriggerBot = { pressed = false, pressStart = 0, lastRelease = 0, fireBroken = false }
+local TriggerBot = { pressed = false, pressStart = 0, lastRelease = 0 }
+local function triggerBackendExhausted(contextMsg)
+        TriggerBot.pressed = false
+        State.TriggerBot = false
+        triggerBackendQueue = backendOrder(IS_TOUCH, State.TriggerBackend)
+        if updateTriggerFloatVisual then updateTriggerFloatVisual() end
+        log("ERROR", "Trigger Bot: " .. contextMsg .. " — ปิด trigger (แตะ TRG จะลองชุด backend ใหม่)")
+        if setStickyStatus then setStickyStatus("trigger bot: " .. contextMsg) end
+end
+
+local function releaseOrFallback()
+        if not fireRelease then return end
+        if pcall(fireRelease) then return end
+        local brokenName = fireName
+        if pickNextBackend("fallback หลัง " .. tostring(brokenName) .. " release error") then
+                pcall(fireRelease)
+        else
+                triggerBackendExhausted("ปล่อยคลิกไม่สำเร็จและไม่เหลือ backend")
+        end
+end
 
 local triggerBadge
 do
@@ -1647,8 +1711,7 @@ function TriggerBot.update(camera)
         local now = os.clock()
 
         local active = State.TriggerBot and State.Aimbot and firePress ~= nil
-                and not rt.fireBroken and hasActiveWeapon()
-                and now >= flickUntil
+                and hasActiveWeapon() and now >= flickUntil
 
         local onTarget = false
         if active then
@@ -1668,7 +1731,7 @@ function TriggerBot.update(camera)
         if rt.pressed and not active then
                 rt.pressed = false
                 rt.lastRelease = now
-                pcall(fireRelease)
+                releaseOrFallback()
         end
 
         local action = triggerDecision(now, onTarget, rt.pressed, rt.pressStart, rt.lastRelease)
@@ -1677,21 +1740,19 @@ function TriggerBot.update(camera)
                         rt.pressed = true
                         rt.pressStart = now
                 else
-                        rt.fireBroken = true
                         rt.pressed = false
-                        log("ERROR", "Trigger Bot: ส่งคลิกไม่สำเร็จ (" .. tostring(fireName) .. ") — ปิด trigger ชั่วคราว")
-                        if setStickyStatus then
-                                setStickyStatus("trigger bot: ส่งคลิกไม่สำเร็จ")
+                        if not pickNextBackend("fallback หลัง " .. tostring(fireName) .. " error") then
+                                triggerBackendExhausted("ส่งคลิกไม่สำเร็จและไม่เหลือ backend")
                         end
                 end
         elseif action == "release" then
-                pcall(fireRelease)
+                releaseOrFallback()
                 rt.pressed = false
                 rt.lastRelease = now
         end
 
         if triggerBadge then
-                local want = State.TriggerBot and not rt.fireBroken
+                local want = State.TriggerBot
                 if want ~= triggerBadge.Visible then
                         triggerBadge.Visible = want
                 end
@@ -1952,9 +2013,6 @@ local function connectRenderLoop()
 end
 connectRenderLoop()
 
--- ==========================================
--- 10. LOAD REPORT & WATCHDOG
--- ==========================================
 setGlxStatus("โหลดครบทุกระบบ — พร้อมใช้")
 
 local stickyMsg, stickyUntil = nil, 0
@@ -2001,9 +2059,6 @@ do
         end))
 end
 
--- ==========================================
--- 11. SELF-TEST
--- ==========================================
 do
         local passed, failed = 0, 0
         local function expect(name, cond)
@@ -2044,6 +2099,17 @@ do
         expect("กดค้างถึงเพดานแม้ยังบนเป้า = ปล่อย", triggerDecision(1.0, true, true, 0.80, 0.70) == "release")
         expect("ไม่บนเป้าและไม่กด = รอ", triggerDecision(1.0, false, false, 0, 0) == "wait")
         expect("เพิ่งปล่อยยังไม่ถึง gap = รอ", triggerDecision(1.0, true, false, 0, 0.95) == "wait")
+
+        expect("Auto มือถือ = VirtualUser → Press ไม่มี VIM",
+                table.concat(backendOrder(true, "Auto"), ",") == "VirtualUser,Press")
+        expect("Auto PC = Press → VIM → VirtualUser",
+                table.concat(backendOrder(false, "Auto"), ",") == "Press,VIM,VirtualUser")
+        expect("บังคับ VIM = ได้ตามสั่ง (รับความเสี่ยงเอง)",
+                table.concat(backendOrder(true, "VIM"), ",") == "VIM")
+        expect("บังคับ Press = Press เดียว",
+                table.concat(backendOrder(false, "Press"), ",") == "Press")
+        expect("ค่าไม่รู้จัก = ถือเป็น Auto",
+                table.concat(backendOrder(true, "ค่าแปลก"), ",") == "VirtualUser,Press")
 
         log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
 end
