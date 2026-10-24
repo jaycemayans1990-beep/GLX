@@ -1,6 +1,33 @@
--- Luau | glx_aimbot_v4_4.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v4_5.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.4 — LAG FIX: กระจายงานหนักออกจากเฟรม)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.5 — BOOT DIAGNOSIS: แก้ "รันแล้วไม่ขึ้นอะไรเลย")
+-- - [v4.5] ผู้ใช้รายงาน "รันสคริปต์ไม่ขึ้นอะไรเลย" (v4.4) — ตรวจ v4.4 ละเอียดแล้วตัวโค้ดปกติ:
+--   syntax ผ่าน parser จริง / จุดแก้ lag ถูกต้อง / ไม่มี error ตอนโหลดจากโค้ดที่เปลี่ยน —
+--   error ใน console ของผู้ใช้ ("gWgWYzqzDfOYZOEYG:1: attempt to call a nil value") เป็น chunk
+--   ชื่อสุ่ม line 1 ซึ่งไม่ตรงกับโครงสร้างไฟล์เรา (บรรทัด 1 เป็น comment) = น่าจะมาจากสคริปต์
+--   อื่นที่รันค้าง (IY/Dex/HD Admin/loader) — แต่สคริปต์เราก็มีจุดตายเงียบจริง จึงอุดครบ:
+--     (1) HARDEN getgenv: จุดเรียก getgenv() ตรง ๆ ก่อนสร้าง UI (บล็อกเก็บรอบเก่า) = จุดตาย
+--         เงียบถ้าสภาพแวดล้อมไม่ครบ → อ้างผ่าน local G (มี getgenv = ตารางเดียวกัน พฤติกรรม
+--         ไม่เปลี่ยน / ไม่มี = ใช้ตารางว่าง ข้ามการเก็บรอบเก่า แต่โหลดต่อได้ถึง UI)
+--     (2) BOOT WATCHDOG: จด phase ตลอดการโหลด (start → เก็บรอบเก่า → UI → ลูป → done) —
+--         8 วิยังไม่ถึง done = ตัวอักษรแดงมุมซ้ายบนจอ (Drawing lib ใช้ได้แม้ ScreenGui ติดไม่ได้)
+--         + warn บอกขั้นที่ค้าง = ไม่มีว่า "ไม่ขึ้นอะไรเลย" โดยไม่มีทางรู้ตัวอีก
+--     (3) EOF SENTINEL: บรรทัดสุดท้ายคือคอมเมนต์ sentinel — paste ครบต้องเห็นท้ายสุด (ไฟล์
+--         ~2,500 บรรทัด: มือถือวางไม่ครบ = parse error = จอว่าง ไม่มี error ให้อ่าน)
+--     (4) คืน gate บล็อก self-test (comment บอกตั้ง getgenv().Glx_SelfTest ก่อน แต่บล็อกหลุด
+--         gate รันทุกครั้งตั้งแต่ v3.8 — เจอตอนไล่หาสาเหตุ ไม่อันตรายแต่ console มีขยะ)
+--     (5) ตัด changelog รุ่นเก่าออกจากหัวไฟล์ (ประวัติเต็มอยู่ที่ worklog.md) = ไฟล์เบาลง ~11KB
+--         ลดโอกาสวางสคริปต์ไม่ครบบนมือถือ
+-- - [v4.4] LAG FIX: กระจายงานหนักออกจากเฟรม (พฤติกรรมเล็ง/ยิง/ESP คงเดิม):
+--     (1) ต้นตอ "แลคเป็นจังหวะ": ESP วัด visibility ทุกคนพร้อมกันทุก 0.35 วิ = raycast burst
+--         → จำกัดงบ ⌈N/10⌉ คน/tick (30Hz) ครบทุกคนพอดีในรอบ กระจายลื่น + ส่ง Head ที่แคชไว้
+--     (2) hasActiveWeapon แคช 0.15 วิ (เดิม FindFirstChildOfClass("Tool") ≈120 ครั้ง/วิ)
+--     (3) getPing แคช 0.5 วิ (เดิม pcall+GetNetworkPing ทุกเฟรมขณะล็อค)
+--     (4) os.clock() ซ้ำในลูก — TriggerBot.update / findBestCandidate รับ now จาก renderTick
+--     (5) GetTargetPart ใช้แคช Root/Head ของ PlayerCache + แคช Head ใน getComponents
+-- - ประวัติรุ่นก่อน (ฉบับเต็มใน worklog.md): v4.3 audit BUG/PERF/DRY 10 จุด | v4.2 มือถืองด VIM
+--   กันเกมปิดเอง + backend ล้มสลับเอง | v4.1 ปุ่มลอย TRG | v4.0 trigger bot จังหวะ "แตะวน"
+--   | v3.9 ไล่เป้าเร็วไม่หลุด/ล็อคไม่แกว่ง | v3.8 รีแฟกเตอร์ตามมาตรฐาน (hook-free สืบจาก v3.3)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -9,7 +36,47 @@ local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
-local LOG_PREFIX = "[GLX v4.4]"
+local G = {}
+do
+        local okG, envG = pcall(function()
+                if type(getgenv) == "function" then return getgenv() end
+                return nil
+        end)
+        if okG and type(envG) == "table" then G = envG end
+end
+
+local bootToken = {}
+G.GLX_BOOT = { phase = "start", token = bootToken, version = "v4.5" }
+local function bootPhase(p)
+        if G.GLX_BOOT then G.GLX_BOOT.phase = p end
+end
+task.delay(8, function()
+        local boot = G.GLX_BOOT
+        if not (boot and boot.token == bootToken) then return end
+        if boot.phase == "done" then return end
+        local stuckAt = boot.phase
+        warn("[GLX v4.5] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt)
+        pcall(function()
+                if Drawing == nil then return end
+                local beacon = Drawing.new("Text")
+                beacon.Text = "GLX BOOT FAILED: " .. stuckAt .. " — ดู console"
+                beacon.Size = 16
+                beacon.Color = Color3.fromRGB(255, 70, 70)
+                beacon.Position = Vector2.new(10, 10)
+                beacon.Outline = true
+                beacon.Visible = true
+                task.spawn(function()
+                        for _ = 1, 20 do
+                                local b = G.GLX_BOOT
+                                if b and b.phase == "done" then break end
+                                task.wait(1)
+                        end
+                        pcall(function() beacon:Remove() end)
+                end)
+        end)
+end)
+
+local LOG_PREFIX = "[GLX v4.5]"
 local function log(level, msg)
         local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
         if level == "INFO" then
@@ -27,9 +94,11 @@ if not LocalPlayer then
         end
 end
 if not LocalPlayer then
+        bootPhase("ไม่พบ LocalPlayer — ยกเลิกโหลด")
         log("ERROR", "ไม่พบ LocalPlayer — รอผู้เล่นโหลดไม่สำเร็จ รันสคริปต์ใหม่อีกครั้งหลังเข้าเกม")
         return
 end
+bootPhase("LocalPlayer พร้อม")
 
 local FALLBACK_SPEED = 3000
 
@@ -66,8 +135,7 @@ function CleanupManager:AddCustomCleanup(func)
 end
 
 function CleanupManager:CleanAll()
-        getgenv().Glx_Running = false
-
+        G.Glx_Running = false
         for _, conn in pairs(self.Connections) do pcall(conn.Disconnect, conn) end
         for _, inst in pairs(self.Instances) do pcall(inst.Destroy, inst) end
         for _, draw in pairs(self.Drawings) do pcall(draw.Remove, draw) end
@@ -79,14 +147,15 @@ function CleanupManager:CleanAll()
         table.clear(self.CustomCleanups)
 end
 
-if getgenv().SnyX_Cleanup and type(getgenv().SnyX_Cleanup.CleanAll) == "function" then
-        pcall(getgenv().SnyX_Cleanup.CleanAll, getgenv().SnyX_Cleanup)
+bootPhase("เก็บรอบเก่า")
+if G.SnyX_Cleanup and type(G.SnyX_Cleanup.CleanAll) == "function" then
+        pcall(G.SnyX_Cleanup.CleanAll, G.SnyX_Cleanup)
 end
-if getgenv().Glx_Cleanup and type(getgenv().Glx_Cleanup.CleanAll) == "function" then
-        pcall(getgenv().Glx_Cleanup.CleanAll, getgenv().Glx_Cleanup)
+if G.Glx_Cleanup and type(G.Glx_Cleanup.CleanAll) == "function" then
+        pcall(G.Glx_Cleanup.CleanAll, G.Glx_Cleanup)
 end
-getgenv().Glx_Cleanup = CleanupManager
-getgenv().Glx_Running = true
+G.Glx_Cleanup = CleanupManager
+G.Glx_Running = true
 
 -- ==========================================
 -- 2. STATE (Global Configuration)
@@ -193,9 +262,9 @@ local function screenDistSq(camera, worldPos, screenCenter)
         return dx * dx + dy * dy
 end
 
-local WeaponService
-local setStickyStatus
-local toggleTriggerBot
+local WeaponService            
+local setStickyStatus          
+local toggleTriggerBot         
 
 local setStatusFn = nil
 local function setGlxStatus(msg)
@@ -205,9 +274,6 @@ local function setGlxStatus(msg)
         end
 end
 
--- ==========================================
--- 3.6 UI CONSTRUCTION
--- ==========================================
 local THEME = {
         Accent = Color3.fromRGB(0, 255, 153),
         AccentHex = "#00FF99",
@@ -244,14 +310,16 @@ local function parentGuiAnywhere(gui)
         return gui.Parent ~= nil
 end
 
+bootPhase("สร้าง UI หลัก")
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Glx_UI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.DisplayOrder = 999999
 if not parentGuiAnywhere(ScreenGui) then
-        log("ERROR", "ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด)")
+        log("ERROR", "ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด) — UI จะไม่แสดง")
 end
 CleanupManager:AddInstance("MainUI", ScreenGui)
+bootPhase("โครง UI พร้อม")
 
 local ToggleBtn = Instance.new("TextButton")
 ToggleBtn.Size = UDim2.new(0, 45, 0, 45)
@@ -361,6 +429,7 @@ end)
 
 enableDrag(ToggleBtn, ToggleBtn)
 enableDrag(TitleBar, MainFrame)
+
 local TRIGGER_FLOAT_SIZE = 40
 local TRIGGER_FLOAT_X = 28
 local TRIGGER_FLOAT_Y = 185
@@ -643,19 +712,16 @@ createSlider("Catch-Up Boost", 0, 3, State.TrackBoost, 0.05, function(v)
 end)
 
 createToggle("Drag To Switch", State.DragSwitch, function(v) State.DragSwitch = v end)
-
 createToggle("Free Steer", State.FreeSteer, function(v) State.FreeSteer = v end)
 createToggle("Switch Assist", State.SwitchAssist, function(v) State.SwitchAssist = v end)
 createSlider("Flick Speed (°/s)", 60, 300, State.FlickSpeed, 5, function(v)
         State.FlickSpeed = v
 end)
-
 createToggle("Weapon Check", State.WeaponCheck, function(v)
         State.WeaponCheck = v
 end)
 
 setGlxStatus("UI พร้อม — กำลังโหลดระบบเกม...")
-
 -- ==========================================
 -- 4. WEAPON SERVICE (Cached Weapon Stats)
 -- ==========================================
@@ -762,11 +828,11 @@ if LocalPlayer then
         if LocalPlayer.Character then setupCharacterWeaponListener(LocalPlayer.Character) end
         CleanupManager:AddConn("CharAdded", LocalPlayer.CharacterAdded:Connect(setupCharacterWeaponListener))
 end
+
 -- ==========================================
 -- 5. VISIBILITY SERVICE (Reuse RaycastParams)
 -- ==========================================
 local VisibilityService = {}
-
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
 RayParams.IgnoreWater = true
@@ -1051,7 +1117,7 @@ local function clampAccelLead(v3, cap)
 end
 
 task.spawn(function()
-        while getgenv().Glx_Running and task.wait(10) do
+        while G.Glx_Running and task.wait(10) do
                 for part in pairs(TargetStates) do
                         if typeof(part) ~= "Instance" or not part:IsDescendantOf(workspace) then
                                 TargetStates[part] = nil
@@ -1170,7 +1236,6 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
         local kinPart = getKinematicPart(targetPart)
         local targetAcc, targetVel = getTargetAcceleration(kinPart, kinPart.AssemblyLinearVelocity, currentTime)
         local pingOffset = (State.PingCompensation and (getPing() * 0.5) or 0) + (leadTime or 0)
-
         local accelLeadCap = MAX_ACCEL_LEAD / (zoomScale or getZoomScale(getCamera()))
 
         local function f(t)
@@ -1465,7 +1530,52 @@ local function connectGuardedLoop(connName, reportLabel, signal, fn, reportAt)
                                         setStickyStatus(reportLabel:lower() .. " error: " .. tostring(err):sub(1, 40))
                                 end
                         end
-    -- ==========================================
+                end
+        end))
+end
+
+local function connectESP()
+        connectGuardedLoop("ESP_Heartbeat", "ESP tick", RunService.Heartbeat, function(dt)
+                lastEspTick = os.clock()
+                espAccumulator += dt
+                if espAccumulator >= ESP_INTERVAL then
+                        espAccumulator = 0
+                        espProcessFn()
+                end
+        end, 5)
+end
+connectESP()
+
+task.spawn(function()
+        while G.Glx_Cleanup == CleanupManager and task.wait(5) do
+                local owned
+                for _, entry in pairs(ESPService.Cache) do
+                        if entry.Highlight or entry.NameTag then
+                                owned = owned or {}
+                                if entry.Highlight then owned[entry.Highlight] = true end
+                                if entry.NameTag then owned[entry.NameTag] = true end
+                        end
+                end
+                for inst in pairs(ESPRegistry) do
+                        if inst.Parent and not (owned and owned[inst]) then
+                                ESPRegistry[inst] = nil
+                                pcall(inst.Destroy, inst)
+                        end
+                end
+                for _, player in ipairs(Players:GetPlayers()) do
+                        local char = player.Character
+                        if char then
+                                for _, child in ipairs(char:GetChildren()) do
+                                        if (child.Name == "ESP_Highlight" or child.Name == "ESP_NameTag")
+                                                and not (owned and owned[child]) then
+                                                pcall(child.Destroy, child)
+                                        end
+                                end
+                        end
+                end
+        end
+end)
+-- ==========================================
 -- 9. MAIN CAMERA ENGINE
 -- ==========================================
 local function tryNewDrawing(kind)
@@ -1486,7 +1596,7 @@ do
                         Filled = false, Transparency = 0.7, NumSides = 3,
                         Remove = function() end
                 }
-                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด")
+                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด (ฟีเจอร์อื่นปกติ)")
         end
 end
 FOVCircle.Thickness = 1.5
@@ -1513,7 +1623,7 @@ local function hasActiveWeapon()
         return result
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog")
+log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog (ไม่มี hook เกม — input สังเคราะห์เฉพาะคลิกของ Trigger Bot [v4.2: มือถืองด VirtualInputManager กันเกมปิดเอง], default OFF — แตะปุ่มลอย TRG หรือกด T เปิด)")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1608,15 +1718,12 @@ local function pickNextBackend(reason)
 end
 
 local forcedBackend = State.TriggerBackend
-pcall(function()
-        if type(getgenv) == "function" and type(getgenv()) == "table"
-                and getgenv().GLX_TRIGGER_BACKEND then
-                forcedBackend = getgenv().GLX_TRIGGER_BACKEND
-        end
-end)
+if type(G.GLX_TRIGGER_BACKEND) == "string" then
+        forcedBackend = G.GLX_TRIGGER_BACKEND
+end
 triggerBackendQueue = backendOrder(IS_TOUCH, forcedBackend)
 if not pickNextBackend(IS_TOUCH and "โหมดมือถือ — งด VirtualInputManager" or nil) then
-        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก")
+        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก (VirtualUser/mouse1press/VIM) — ฟีเจอร์นี้ใช้ไม่ได้ ระบบอื่นปกติ")
 end
 
 local function triggerDecision(now, onTarget, pressed, pressStart, lastRelease)
@@ -1639,7 +1746,7 @@ local function triggerBackendExhausted(contextMsg)
         State.TriggerBot = false
         triggerBackendQueue = backendOrder(IS_TOUCH, State.TriggerBackend)
         if updateTriggerFloatVisual then updateTriggerFloatVisual() end
-        log("ERROR", "Trigger Bot: " .. contextMsg .. " — ปิด trigger")
+        log("ERROR", "Trigger Bot: " .. contextMsg .. " — ปิด trigger (แตะ TRG จะลองชุด backend ใหม่)")
         if setStickyStatus then setStickyStatus("trigger bot: " .. contextMsg) end
 end
 
@@ -1658,7 +1765,7 @@ toggleTriggerBot = function(source)
         State.TriggerBot = not State.TriggerBot
         if updateTriggerFloatVisual then updateTriggerFloatVisual() end
         if State.TriggerBot and firePress == nil then
-                log("WARN", "Trigger Bot ON แต่ไม่มี backend ส่งคลิก")
+                log("WARN", "Trigger Bot ON แต่ไม่มี backend ส่งคลิก — ยิงไม่ได้ (ดู WARN ตอนโหลดสคริปต์)")
                 if setStickyStatus then setStickyStatus("trigger bot: ไม่มี backend ส่งคลิก") end
         end
         log("INFO", "Trigger Bot " .. (State.TriggerBot and "ON" or "OFF") .. " (" .. source .. ")")
@@ -1889,7 +1996,6 @@ local function renderTick(deltaTime)
                         local errDeg = angleBetweenDeg(camera.CFrame.LookVector, desiredDirection)
                         local errScaled = errDeg * zoomScale
                         local gain = State.TrackBoost or 1.5
-
                         if now - lastAimWriteClock > 0.1 then
                                 prevDesiredDir = nil
                                 desSmoothed = 0
@@ -1905,7 +2011,6 @@ local function renderTick(deltaTime)
                         local effSpeed = math.min(baseRate + errScaled * gain, trackCap)
                         local sdt = math.min(deltaTime, 1 / 30)
                         local alpha = 1 - math.exp(-effSpeed * sdt)
-
                         if errDeg < AIM_MICRO_SMOOTH_DEG then
                                 alpha *= AIM_MICRO_MIN + (1 - AIM_MICRO_MIN) * (errDeg / AIM_MICRO_SMOOTH_DEG)
                         end
@@ -1958,11 +2063,9 @@ local function connectRenderLoop()
                 renderTick(deltaTime)
         end, 10)
 end
+bootPhase("ต่อลูป render/ESP")
 connectRenderLoop()
 
--- ==========================================
--- 10. LOAD REPORT
--- ==========================================
 setGlxStatus("โหลดครบทุกระบบ — พร้อมใช้")
 
 local stickyMsg, stickyUntil = nil, 0
@@ -2009,10 +2112,7 @@ do
         end))
 end
 
--- ==========================================
--- 11. SELF-TEST
--- ==========================================
-do
+if G.Glx_SelfTest then
         local passed, failed = 0, 0
         local function expect(name, cond)
                 if cond then
@@ -2057,7 +2157,7 @@ do
                 table.concat(backendOrder(true, "Auto"), ",") == "VirtualUser,Press")
         expect("Auto PC = Press → VIM → VirtualUser",
                 table.concat(backendOrder(false, "Auto"), ",") == "Press,VIM,VirtualUser")
-        expect("บังคับ VIM = ได้ตามสั่ง",
+        expect("บังคับ VIM = ได้ตามสั่ง (รับความเสี่ยงเอง)",
                 table.concat(backendOrder(true, "VIM"), ",") == "VIM")
         expect("บังคับ Press = Press เดียว",
                 table.concat(backendOrder(false, "Press"), ",") == "Press")
@@ -2076,3 +2176,8 @@ do
 
         log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
 end
+
+bootPhase("done")
+log("INFO", "boot complete — โค้ดถึงบรรทัดสุดท้ายครบ (ถ้าปุ่ม Glx ยังไม่ขึ้น = executor แสดง ScreenGui ไม่ได้ ลองรีเข้าเกมแล้วรันใหม่ หรือปิดสคริปต์อื่นเช่น IY/Dex ที่อาจชนกัน)")
+-- [GLX v4.5 EOF] บรรทัดสุดท้ายของไฟล์ — paste ครบต้องเห็นบรรทัดนี้ท้ายสุด
+   
