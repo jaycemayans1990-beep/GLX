@@ -1,6 +1,6 @@
--- Luau | glx_aimbot_v4_2.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v4_4.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.2 — MOBILE-SAFE TRIGGER BACKEND)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.4 — LAG FIX: กระจายงานหนักออกจากเฟรม)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -9,7 +9,7 @@ local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
-local LOG_PREFIX = "[GLX v4.2]"
+local LOG_PREFIX = "[GLX v4.4]"
 local function log(level, msg)
         local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
         if level == "INFO" then
@@ -104,7 +104,7 @@ local State = {
         FlickSpeed = 75,
         FreeSteer = true,
         SwitchAssist = true,
-        WeaponCheck = true,
+        WeaponCheck = false,
         TargetPartMode = "Head",
         PingCompensation = true,
         DropIsMultiplier = true,
@@ -124,6 +124,7 @@ local State = {
 
 local BAN_OVERRIDE_RATIO = 0.12
 local ESP_VIS_INTERVAL = 0.35
+local ESP_VIS_BUDGET_DIV = 10
 local PIERCE_TRANSPARENCY = 0.8
 local AIM_PROJECTION_DIST = 10000
 local MAX_TRACK_DPS = 70
@@ -142,17 +143,22 @@ local TRIGGER_GAP = 0.07
 local TRIGGER_RADIUS_DEFAULT = 14
 
 local function getCamera() return Workspace.CurrentCamera end
-
 local DEFAULT_FOV = 70
 
 local function getZoomScale(camera)
         return math.clamp(DEFAULT_FOV / math.max(camera.FieldOfView, 1), 1, 5)
 end
 
+local PING_TTL = 0.5
+local pingCache = { value = 0.025, expires = 0 }
 local function getPing()
         if not LocalPlayer then return 0.025 end
+        local nowClock = os.clock()
+        if nowClock < pingCache.expires then return pingCache.value end
         local success, ping = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
-        return (success and type(ping) == "number") and ping or 0.025
+        pingCache.value = (success and type(ping) == "number") and ping or 0.025
+        pingCache.expires = nowClock + PING_TTL
+        return pingCache.value
 end
 
 -- ==========================================
@@ -175,11 +181,21 @@ local function safeUnit(v3)
         return isFiniteVec3(unit) and unit or nil
 end
 
--- ==========================================
--- 3.5 FORWARD DECLARATIONS + LOAD STATUS (v3.1)
--- ==========================================
+local function angleBetweenDeg(a, b)
+        return math.deg(math.acos(math.clamp(a:Dot(b), -1, 1)))
+end
+
+local function screenDistSq(camera, worldPos, screenCenter)
+        local sp, onScreen = camera:WorldToViewportPoint(worldPos)
+        if not (onScreen and sp.Z > 0) then return nil end
+        local dx = sp.X - screenCenter.X
+        local dy = sp.Y - screenCenter.Y
+        return dx * dx + dy * dy
+end
+
 local WeaponService
 local setStickyStatus
+local toggleTriggerBot
 
 local setStatusFn = nil
 local function setGlxStatus(msg)
@@ -190,7 +206,7 @@ local function setGlxStatus(msg)
 end
 
 -- ==========================================
--- 3.6 UI CONSTRUCTION (v3.1 — สร้าง UI "ก่อน" ระบบอื่นทั้งหมด)
+-- 3.6 UI CONSTRUCTION
 -- ==========================================
 local THEME = {
         Accent = Color3.fromRGB(0, 255, 153),
@@ -207,11 +223,7 @@ local THEME = {
         ToggleOff = Color3.fromRGB(150, 50, 50)
 }
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "Glx_UI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.DisplayOrder = 999999
-do
+local function parentGuiAnywhere(gui)
         local parents = {}
         if type(gethui) == "function" then
                 local okH, h = pcall(gethui)
@@ -226,12 +238,18 @@ do
                 end)
         end
         for _, par in ipairs(parents) do
-                local okP = pcall(function() ScreenGui.Parent = par end)
-                if okP and ScreenGui.Parent ~= nil then break end
+                local okP = pcall(function() gui.Parent = par end)
+                if okP and gui.Parent ~= nil then break end
         end
+        return gui.Parent ~= nil
 end
-if not ScreenGui.Parent then
-        log("ERROR", "ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด) — UI จะไม่แสดง")
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Glx_UI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 999999
+if not parentGuiAnywhere(ScreenGui) then
+        log("ERROR", "ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด)")
 end
 CleanupManager:AddInstance("MainUI", ScreenGui)
 
@@ -343,7 +361,6 @@ end)
 
 enableDrag(ToggleBtn, ToggleBtn)
 enableDrag(TitleBar, MainFrame)
-
 local TRIGGER_FLOAT_SIZE = 40
 local TRIGGER_FLOAT_X = 28
 local TRIGGER_FLOAT_Y = 185
@@ -353,24 +370,7 @@ local TriggerFloatGui = Instance.new("ScreenGui")
 TriggerFloatGui.Name = "Glx_TriggerFloat"
 TriggerFloatGui.ResetOnSpawn = false
 TriggerFloatGui.DisplayOrder = 999999
-do
-        local parents = {}
-        if type(gethui) == "function" then
-                local okH, h = pcall(gethui)
-                if okH and h then table.insert(parents, h) end
-        end
-        pcall(function() table.insert(parents, game:GetService("CoreGui")) end)
-        if LocalPlayer then
-                pcall(function()
-                        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-                        if pg then table.insert(parents, pg) end
-                end)
-        end
-        for _, par in ipairs(parents) do
-                local okP = pcall(function() TriggerFloatGui.Parent = par end)
-                if okP and TriggerFloatGui.Parent ~= nil then break end
-        end
-end
+parentGuiAnywhere(TriggerFloatGui)
 CleanupManager:AddInstance("TriggerFloatUI", TriggerFloatGui)
 
 local TriggerFloatBtn = Instance.new("TextButton")
@@ -422,9 +422,7 @@ end))
 
 CleanupManager:AddConn("TrigFloatClick", TriggerFloatBtn.MouseButton1Click:Connect(function()
         if floatMoved then return end
-        State.TriggerBot = not State.TriggerBot
-        updateTriggerFloatVisual()
-        log("INFO", "Trigger Bot " .. (State.TriggerBot and "ON" or "OFF") .. " (แตะปุ่มลอย TRG)")
+        toggleTriggerBot("แตะปุ่มลอย TRG")
 end))
 
 enableDrag(TriggerFloatBtn, TriggerFloatBtn)
@@ -446,10 +444,10 @@ end)
 
 local currentLayoutOrder = 0
 
-local function createToggle(text, initialState, callback)
+local function createWidgetFrame(height, labelText, labelSize, labelPos, labelTextSize)
         currentLayoutOrder += 1
         local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 32)
+        frame.Size = UDim2.new(1, 0, 0, height)
         frame.BackgroundColor3 = THEME.BG
         frame.LayoutOrder = currentLayoutOrder
         frame.Parent = ScrollFrame
@@ -459,15 +457,21 @@ local function createToggle(text, initialState, callback)
         corner.Parent = frame
 
         local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(0.7, -10, 1, 0)
-        label.Position = UDim2.new(0.04, 0, 0, 0)
+        label.Size = labelSize
+        label.Position = labelPos
         label.BackgroundTransparency = 1
-        label.Text = text
+        label.Text = labelText
         label.TextColor3 = THEME.Text
         label.Font = Enum.Font.SourceSans
-        label.TextSize = 12
+        label.TextSize = labelTextSize
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.Parent = frame
+
+        return frame, label
+end
+
+local function createToggle(text, initialState, callback)
+        local frame = createWidgetFrame(32, text, UDim2.new(0.7, -10, 1, 0), UDim2.new(0.04, 0, 0, 0), 12)
 
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(0, 48, 0, 20)
@@ -493,27 +497,7 @@ local function createToggle(text, initialState, callback)
 end
 
 local function createModeSelector(text, modesArray, initialIndex, callback)
-        currentLayoutOrder += 1
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 32)
-        frame.BackgroundColor3 = THEME.BG
-        frame.LayoutOrder = currentLayoutOrder
-        frame.Parent = ScrollFrame
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 6)
-        corner.Parent = frame
-
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(0.5, -10, 1, 0)
-        label.Position = UDim2.new(0.04, 0, 0, 0)
-        label.BackgroundTransparency = 1
-        label.Text = text
-        label.TextColor3 = THEME.Text
-        label.Font = Enum.Font.SourceSans
-        label.TextSize = 12
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Parent = frame
+        local frame = createWidgetFrame(32, text, UDim2.new(0.5, -10, 1, 0), UDim2.new(0.04, 0, 0, 0), 12)
 
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(0, 80, 0, 20)
@@ -539,27 +523,7 @@ local function createModeSelector(text, modesArray, initialIndex, callback)
 end
 
 local function createSlider(text, min, max, default, step, callback)
-        currentLayoutOrder += 1
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 48)
-        frame.BackgroundColor3 = THEME.BG
-        frame.LayoutOrder = currentLayoutOrder
-        frame.Parent = ScrollFrame
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 6)
-        corner.Parent = frame
-
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(0.6, 0, 0, 20)
-        label.Position = UDim2.new(0.04, 0, 0, 3)
-        label.BackgroundTransparency = 1
-        label.Text = text
-        label.TextColor3 = THEME.Text
-        label.Font = Enum.Font.SourceSans
-        label.TextSize = 11
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Parent = frame
+        local frame = createWidgetFrame(48, text, UDim2.new(0.6, 0, 0, 20), UDim2.new(0.04, 0, 0, 3), 11)
 
         local valLabel = Instance.new("TextLabel")
         valLabel.Size = UDim2.new(0.3, 0, 0, 20)
@@ -691,6 +655,7 @@ createToggle("Weapon Check", State.WeaponCheck, function(v)
 end)
 
 setGlxStatus("UI พร้อม — กำลังโหลดระบบเกม...")
+
 -- ==========================================
 -- 4. WEAPON SERVICE (Cached Weapon Stats)
 -- ==========================================
@@ -797,11 +762,11 @@ if LocalPlayer then
         if LocalPlayer.Character then setupCharacterWeaponListener(LocalPlayer.Character) end
         CleanupManager:AddConn("CharAdded", LocalPlayer.CharacterAdded:Connect(setupCharacterWeaponListener))
 end
-
 -- ==========================================
 -- 5. VISIBILITY SERVICE (Reuse RaycastParams)
 -- ==========================================
 local VisibilityService = {}
+
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
 RayParams.IgnoreWater = true
@@ -837,8 +802,8 @@ function VisibilityService:CheckVisibility(targetCharacter, pierceCount, specifi
                 ScratchFilter[n] = myChar
         end
 
+        RayParams.FilterDescendantsInstances = ScratchFilter
         for i = 1, maxPierces do
-                RayParams.FilterDescendantsInstances = ScratchFilter
                 local okRay, result = pcall(Workspace.Raycast, Workspace, currentOrigin, currentDirection, RayParams)
 
                 if not okRay or not result then return true end
@@ -895,6 +860,12 @@ local function getComponents(player)
         if not entry.Root then
                 entry.Root = char:FindFirstChild("HumanoidRootPart")
         end
+        if entry.Head and entry.Head.Parent ~= char then
+                entry.Head = nil
+        end
+        if not entry.Head then
+                entry.Head = char:FindFirstChild("Head")
+        end
         return entry
 end
 
@@ -941,12 +912,19 @@ local TargetService = {
         LockedPartName = nil
 }
 
+local function banTargetAndRelease(player, cooldownSec)
+        switchAwayPlayer = player
+        switchCooldownUntil = os.clock() + cooldownSec
+        TargetService:ReleaseTarget()
+end
+
 local RANDOM_PARTS = { "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart" }
 
-function TargetService:GetTargetPart(char)
-        local root = char:FindFirstChild("HumanoidRootPart")
+function TargetService:GetTargetPart(player, char)
+        local comp = getComponents(player)
+        local root = comp and comp.Root
         if State.TargetPartMode == "Head" then
-                return char:FindFirstChild("Head") or root
+                return (comp and comp.Head) or root
         end
         if State.TargetPartMode == "Random" then
                 if self.LockedPartName then
@@ -980,32 +958,33 @@ function TargetService:KeepTarget(camera, screenCenter, scaledFOV)
                 return false
         end
 
-        local screenPoint, onScreen = camera:WorldToViewportPoint(part.Position)
-        if not onScreen or screenPoint.Z <= 0 then return false end
+        local distSq = screenDistSq(camera, part.Position, screenCenter)
+        if not distSq then return false end
 
-        local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - screenCenter).Magnitude
-        return dist <= scaledFOV * KEEP_HYSTERESIS
+        local keepRadius = scaledFOV * KEEP_HYSTERESIS
+        return distSq <= keepRadius * keepRadius
 end
 
-local function findBestCandidate(self, camera, screenCenter, scaledFOV, limit, excludePlayer)
-        local now = os.clock()
+local function findBestCandidate(self, camera, screenCenter, scaledFOV, limit, excludePlayer, now)
+        now = now or os.clock()
         local cooldownActive = switchCooldownUntil > now and switchAwayPlayer ~= nil
 
-        local bestDist, bestPlayer, bestPart = limit, nil, nil
+        local bestDistSq = limit * limit
+        local bestPlayer, bestPart = nil, nil
         local players = Players:GetPlayers()
         for i = 1, #players do
                 local player = players[i]
                 if player ~= excludePlayer and isValidEnemy(player) then
-                        local part = self:GetTargetPart(player.Character)
+                        local part = self:GetTargetPart(player, player.Character)
                         if part then
-                                local screenPoint, onScreen = camera:WorldToViewportPoint(part.Position)
-                                if onScreen and screenPoint.Z > 0 then
-                                        local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - screenCenter).Magnitude
+                                local distSq = screenDistSq(camera, part.Position, screenCenter)
+                                if distSq then
                                         local banned = cooldownActive and player == switchAwayPlayer
-                                        if dist < bestDist and (not banned or dist <= scaledFOV * BAN_OVERRIDE_RATIO) then
+                                        local banRadius = scaledFOV * BAN_OVERRIDE_RATIO
+                                        if distSq < bestDistSq and (not banned or distSq <= banRadius * banRadius) then
                                                 if not State.WallCheck
                                                         or VisibilityService:CheckVisibility(player.Character, 1, part) then
-                                                        bestDist = dist
+                                                        bestDistSq = distSq
                                                         bestPlayer = player
                                                         bestPart = part
                                                 end
@@ -1017,8 +996,8 @@ local function findBestCandidate(self, camera, screenCenter, scaledFOV, limit, e
         return bestPlayer, bestPart
 end
 
-function TargetService:AcquireTarget(camera, screenCenter, scaledFOV)
-        local bestPlayer, bestPart = findBestCandidate(self, camera, screenCenter, scaledFOV, scaledFOV, nil)
+function TargetService:AcquireTarget(camera, screenCenter, scaledFOV, now)
+        local bestPlayer, bestPart = findBestCandidate(self, camera, screenCenter, scaledFOV, scaledFOV, nil, now)
         if bestPlayer then
                 if bestPlayer ~= self.CurrentTarget then
                         self.LockedPartName = nil
@@ -1037,21 +1016,17 @@ function TargetService:CheckSwitch(camera, screenCenter, scaledFOV)
         local part = self.TargetPart
         if not (target and part and part.Parent) then return end
 
-        local myPoint, myOn = camera:WorldToViewportPoint(part.Position)
-        if not (myOn and myPoint.Z > 0) then return end
-        local myDist = (Vector2.new(myPoint.X, myPoint.Y) - screenCenter).Magnitude
+        local myDistSq = screenDistSq(camera, part.Position, screenCenter)
+        if not myDistSq then return end
 
-        local limit = math.min(myDist * SWITCH_RATIO, scaledFOV)
+        local limit = math.min(math.sqrt(myDistSq) * SWITCH_RATIO, scaledFOV)
         if limit <= 0 then return end
 
-        local bestPlayer, bestPart = findBestCandidate(self, camera, screenCenter, scaledFOV, limit, target)
+        local bestPlayer, bestPart = findBestCandidate(self, camera, screenCenter, scaledFOV, limit, target, now)
         if bestPlayer then
-                switchAwayPlayer = target
-                switchCooldownUntil = now + FLICK_SWITCH_COOLDOWN
+                banTargetAndRelease(target, SWITCH_COOLDOWN)
                 self.CurrentTarget = bestPlayer
                 self.TargetPart = bestPart
-                self.LockedPartName = nil
-                targetGraceUntil = 0
         end
 end
 -- ==========================================
@@ -1113,7 +1088,6 @@ local function getTargetAcceleration(kinPart, targetVel, currentTime)
                 local outVel = state and state.smoothedVelocity
                 return Vector3.zero, (isFiniteVec3(outVel) and outVel) or Vector3.zero
         end
-
         if state then
                 if not isFiniteVec3(state.smoothedVelocity) then state.smoothedVelocity = targetVel end
                 if not isFiniteVec3(state.smoothedAcceleration) then state.smoothedAcceleration = Vector3.zero end
@@ -1196,6 +1170,7 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
         local kinPart = getKinematicPart(targetPart)
         local targetAcc, targetVel = getTargetAcceleration(kinPart, kinPart.AssemblyLinearVelocity, currentTime)
         local pingOffset = (State.PingCompensation and (getPing() * 0.5) or 0) + (leadTime or 0)
+
         local accelLeadCap = MAX_ACCEL_LEAD / (zoomScale or getZoomScale(getCamera()))
 
         local function f(t)
@@ -1283,6 +1258,7 @@ local function getPredictedPosition(targetPart, shooterPos, deltaTime, leadTime,
 
         return targetPos
 end
+
 -- ==========================================
 -- 8. ESP SERVICE (Throttle 30Hz, Ref-Cached)
 -- ==========================================
@@ -1296,16 +1272,26 @@ local ESPService = {
 
 local ESPRegistry = setmetatable({}, { __mode = "k" })
 
-local function destroyEntryVisuals(entry)
-        if not entry then return end
+local function destroyHighlight(entry)
         if entry.Highlight then
                 pcall(entry.Highlight.Destroy, entry.Highlight)
                 entry.Highlight = nil
+                entry.ShownVisible = nil
         end
+end
+
+local function destroyNameTag(entry)
         if entry.NameTag then
                 pcall(entry.NameTag.Destroy, entry.NameTag)
                 entry.NameTag = nil
+                entry.TagLabel = nil
         end
+end
+
+local function destroyEntryVisuals(entry)
+        if not entry then return end
+        destroyHighlight(entry)
+        destroyNameTag(entry)
         entry.ShownVisible = nil
 end
 
@@ -1356,10 +1342,19 @@ end
 function ESPService:ProcessESP()
         local now = os.clock()
         local players = Players:GetPlayers()
+        local espActive = State.ESP or State.ESPName
+        local visBudget = math.max(1, math.ceil(#players / ESP_VIS_BUDGET_DIV))
 
         for i = 1, #players do
                 local player = players[i]
                 if player ~= LocalPlayer then
+                        if not espActive then
+                                local staleEntry = self.Cache[player]
+                                if staleEntry and (staleEntry.Highlight or staleEntry.NameTag) then
+                                        destroyEntryVisuals(staleEntry)
+                                end
+                                continue
+                        end
                         local char = player.Character
 
                         if not char then
@@ -1384,14 +1379,14 @@ function ESPService:ProcessESP()
 
                                 local isEnemy = isValidEnemy(player)
 
-                                if not isEnemy or (not State.ESP and not State.ESPName) then
-                                        if entry.Highlight then entry.Highlight:Destroy(); entry.Highlight = nil end
-                                        if entry.NameTag then entry.NameTag:Destroy(); entry.NameTag = nil end
-                                        entry.TagLabel = nil
-                                        entry.ShownVisible = nil
+                                if not isEnemy or not espActive then
+                                        destroyEntryVisuals(entry)
                                 else
-                                        if now - entry.LastCheck >= ESP_VIS_INTERVAL then
-                                                entry.Visible = VisibilityService:CheckVisibility(char, 5, nil)
+                                        if visBudget > 0 and now - entry.LastCheck >= ESP_VIS_INTERVAL then
+                                                visBudget -= 1
+                                                local headPart = entry.Head
+                                                if headPart and headPart.Parent ~= char then headPart = nil end
+                                                entry.Visible = VisibilityService:CheckVisibility(char, 5, headPart)
                                                 entry.LastCheck = now
                                         end
 
@@ -1412,10 +1407,8 @@ function ESPService:ProcessESP()
                                                         hl.OutlineColor = entry.Visible and self.OUTLINE_VISIBLE or self.OUTLINE_OBSTRUCTED
                                                         entry.ShownVisible = entry.Visible
                                                 end
-                                        elseif entry.Highlight then
-                                                entry.Highlight:Destroy()
-                                                entry.Highlight = nil
-                                                entry.ShownVisible = nil
+                                        else
+                                                destroyHighlight(entry)
                                         end
 
                                         if State.ESPName then
@@ -1439,13 +1432,11 @@ function ESPService:ProcessESP()
                                                         if label and label.TextColor3 ~= color then
                                                                 label.TextColor3 = color
                                                         end
-                                                elseif entry.NameTag then
-                                                        entry.NameTag:Destroy()
-                                                        entry.NameTag = nil
+                                                else
+                                                        destroyNameTag(entry)
                                                 end
-                                        elseif entry.NameTag then
-                                                entry.NameTag:Destroy()
-                                                entry.NameTag = nil
+                                        else
+                                                destroyNameTag(entry)
                                         end
                                 end
                         end
@@ -1456,72 +1447,37 @@ end
 local espAccumulator = 0
 local ESP_INTERVAL = 1 / 30
 local lastEspTick = os.clock()
-local espErrStreak = 0
 local espProcessFn = function() ESPService:ProcessESP() end
 local traceFn = (type(debug) == "table" and type(debug.traceback) == "function")
         and debug.traceback or function(e) return tostring(e) end
 
-local function connectESP()
-        CleanupManager:AddConn("ESP_Heartbeat", RunService.Heartbeat:Connect(function(dt)
-                lastEspTick = os.clock()
-                if not State.ESP and not State.ESPName then return end
-                espAccumulator += dt
-                if espAccumulator >= ESP_INTERVAL then
-                        espAccumulator = 0
-                        local ok, err = xpcall(espProcessFn, traceFn)
-                        if ok then
-                                espErrStreak = 0
-                        else
-                                espErrStreak += 1
-                                if espErrStreak == 5 then
-                                        log("ERROR", "ESP tick error: " .. tostring(err))
-                                        if setStickyStatus then
-                                                setStickyStatus("ESP error: " .. tostring(err):sub(1, 40))
-                                        end
+local function connectGuardedLoop(connName, reportLabel, signal, fn, reportAt)
+        local errStreak = 0
+        CleanupManager:AddConn(connName, signal:Connect(function(...)
+                local ok, err = xpcall(fn, traceFn, ...)
+                if ok then
+                        errStreak = 0
+                else
+                        errStreak += 1
+                        if errStreak == reportAt then
+                                log("ERROR", reportLabel .. " error: " .. tostring(err))
+                                if setStickyStatus then
+                                        setStickyStatus(reportLabel:lower() .. " error: " .. tostring(err):sub(1, 40))
                                 end
                         end
-                end
-        end))
-end
-connectESP()
-
-task.spawn(function()
-        while getgenv().Glx_Cleanup == CleanupManager and task.wait(5) do
-                local owned
-                for _, entry in pairs(ESPService.Cache) do
-                        if entry.Highlight or entry.NameTag then
-                                owned = owned or {}
-                                if entry.Highlight then owned[entry.Highlight] = true end
-                                if entry.NameTag then owned[entry.NameTag] = true end
-                        end
-                end
-                for inst in pairs(ESPRegistry) do
-                        if inst.Parent and not (owned and owned[inst]) then
-                                ESPRegistry[inst] = nil
-                                pcall(inst.Destroy, inst)
-                        end
-                end
-                for _, player in ipairs(Players:GetPlayers()) do
-                        local char = player.Character
-                        if char then
-                                for _, child in ipairs(char:GetChildren()) do
-                                        if (child.Name == "ESP_Highlight" or child.Name == "ESP_NameTag")
-                                                and not (owned and owned[child]) then
-                                                pcall(child.Destroy, child)
-                                        end
-                                end
-                        end
-                end
-        end
-end)
-
--- ==========================================
+    -- ==========================================
 -- 9. MAIN CAMERA ENGINE
 -- ==========================================
+local function tryNewDrawing(kind)
+        local ok, obj = pcall(function() return Drawing.new(kind) end)
+        if ok and obj then return obj end
+        return nil
+end
+
 local FOVCircle
 do
-        local okDraw, drawObj = pcall(function() return Drawing.new("Circle") end)
-        if okDraw and drawObj then
+        local drawObj = tryNewDrawing("Circle")
+        if drawObj then
                 FOVCircle = drawObj
         else
                 FOVCircle = {
@@ -1530,7 +1486,7 @@ do
                         Filled = false, Transparency = 0.7, NumSides = 3,
                         Remove = function() end
                 }
-                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด (ฟีเจอร์อื่นปกติ)")
+                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด")
         end
 end
 FOVCircle.Thickness = 1.5
@@ -1540,14 +1496,24 @@ FOVCircle.Transparency = 0.7
 FOVCircle.Visible = false
 CleanupManager:AddDrawing("FOVCircle", FOVCircle)
 
+local WEAPON_CHECK_TTL = 0.15
+local weaponCache = { character = nil, result = false, expires = 0 }
 local function hasActiveWeapon()
         local character = LocalPlayer and LocalPlayer.Character
         if not character then return false end
         if State.WeaponCheck == false then return true end
-        return character:FindFirstChildOfClass("Tool") ~= nil
+        local nowClock = os.clock()
+        if weaponCache.character == character and nowClock < weaponCache.expires then
+                return weaponCache.result
+        end
+        local result = character:FindFirstChildOfClass("Tool") ~= nil
+        weaponCache.character = character
+        weaponCache.result = result
+        weaponCache.expires = nowClock + WEAPON_CHECK_TTL
+        return result
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog (ไม่มี hook เกม — input สังเคราะห์เฉพาะคลิกของ Trigger Bot [v4.2: มือถืองด VirtualInputManager กันเกมปิดเอง], default OFF — แตะปุ่มลอย TRG หรือกด T เปิด)")
+log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1568,7 +1534,7 @@ local desSmoothed = 0
 local lastAimWriteClock = 0
 
 -- ==========================================
--- [v4.0] TRIGGER BOT — ยิงอัตโนมัติเมื่อจุดเล็งลงบนเป้าที่ล็อค (ทั้งระบบ "นอก UI")
+-- [v4.0] TRIGGER BOT
 -- ==========================================
 local IS_TOUCH = false
 pcall(function()
@@ -1650,7 +1616,7 @@ pcall(function()
 end)
 triggerBackendQueue = backendOrder(IS_TOUCH, forcedBackend)
 if not pickNextBackend(IS_TOUCH and "โหมดมือถือ — งด VirtualInputManager" or nil) then
-        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก (VirtualUser/mouse1press/VIM) — ฟีเจอร์นี้ใช้ไม่ได้ ระบบอื่นปกติ")
+        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก")
 end
 
 local function triggerDecision(now, onTarget, pressed, pressStart, lastRelease)
@@ -1667,12 +1633,13 @@ local function triggerDecision(now, onTarget, pressed, pressStart, lastRelease)
 end
 
 local TriggerBot = { pressed = false, pressStart = 0, lastRelease = 0 }
+
 local function triggerBackendExhausted(contextMsg)
         TriggerBot.pressed = false
         State.TriggerBot = false
         triggerBackendQueue = backendOrder(IS_TOUCH, State.TriggerBackend)
         if updateTriggerFloatVisual then updateTriggerFloatVisual() end
-        log("ERROR", "Trigger Bot: " .. contextMsg .. " — ปิด trigger (แตะ TRG จะลองชุด backend ใหม่)")
+        log("ERROR", "Trigger Bot: " .. contextMsg .. " — ปิด trigger")
         if setStickyStatus then setStickyStatus("trigger bot: " .. contextMsg) end
 end
 
@@ -1687,16 +1654,29 @@ local function releaseOrFallback()
         end
 end
 
+toggleTriggerBot = function(source)
+        State.TriggerBot = not State.TriggerBot
+        if updateTriggerFloatVisual then updateTriggerFloatVisual() end
+        if State.TriggerBot and firePress == nil then
+                log("WARN", "Trigger Bot ON แต่ไม่มี backend ส่งคลิก")
+                if setStickyStatus then setStickyStatus("trigger bot: ไม่มี backend ส่งคลิก") end
+        end
+        log("INFO", "Trigger Bot " .. (State.TriggerBot and "ON" or "OFF") .. " (" .. source .. ")")
+end
+
+local TRIGGER_COLOR_READY = Color3.fromRGB(120, 220, 130)
+local TRIGGER_COLOR_FIRING = Color3.fromRGB(255, 90, 90)
+local badgeLastHalfX = nil
 local triggerBadge
 do
-        local okBadge, badge = pcall(function() return Drawing.new("Text") end)
-        if okBadge and badge then
+        local badge = tryNewDrawing("Text")
+        if badge then
                 badge.Text = "TRIGGER ON"
                 badge.Size = 13
                 badge.Center = true
                 badge.Outline = true
                 badge.OutlineColor = Color3.fromRGB(0, 0, 0)
-                badge.Color = Color3.fromRGB(120, 220, 130)
+                badge.Color = TRIGGER_COLOR_READY
                 badge.Position = Vector2.new(0, 26)
                 badge.Visible = false
                 CleanupManager:AddDrawing("TriggerBadge", badge)
@@ -1706,9 +1686,9 @@ end
 
 local TRIGGER_BADGE_Y = 26
 
-function TriggerBot.update(camera)
+function TriggerBot.update(camera, screenCenter, vp, now)
         local rt = TriggerBot
-        local now = os.clock()
+        now = now or os.clock()
 
         local active = State.TriggerBot and State.Aimbot and firePress ~= nil
                 and hasActiveWeapon() and now >= flickUntil
@@ -1717,14 +1697,9 @@ function TriggerBot.update(camera)
         if active then
                 local part = TargetService.TargetPart
                 if part and part.Parent and TargetService.CurrentTarget then
-                        local sp, onScreen = camera:WorldToViewportPoint(part.Position)
-                        if onScreen and sp.Z > 0 then
-                                local vp = camera.ViewportSize
-                                local radiusPx = (State.TriggerRadius or TRIGGER_RADIUS_DEFAULT) * (vp.Y / 1080)
-                                local dx = sp.X - vp.X * 0.5
-                                local dy = sp.Y - vp.Y * 0.5
-                                onTarget = dx * dx + dy * dy <= radiusPx * radiusPx
-                        end
+                        local radiusPx = (State.TriggerRadius or TRIGGER_RADIUS_DEFAULT) * (vp.Y / 1080)
+                        local distSq = screenDistSq(camera, part.Position, screenCenter)
+                        onTarget = distSq ~= nil and distSq <= radiusPx * radiusPx
                 end
         end
 
@@ -1757,11 +1732,13 @@ function TriggerBot.update(camera)
                         triggerBadge.Visible = want
                 end
                 if triggerBadge.Visible then
-                        local vp = camera.ViewportSize
-                        triggerBadge.Position = Vector2.new(vp.X * 0.5, TRIGGER_BADGE_Y)
-                        local firing = rt.pressed
-                        local newColor = firing and Color3.fromRGB(255, 90, 90) or Color3.fromRGB(120, 220, 130)
-                        local newText = firing and "TRIGGER — ยิง" or "TRIGGER ON"
+                        local halfX = vp.X * 0.5
+                        if badgeLastHalfX ~= halfX then
+                                triggerBadge.Position = Vector2.new(halfX, TRIGGER_BADGE_Y)
+                                badgeLastHalfX = halfX
+                        end
+                        local newColor = rt.pressed and TRIGGER_COLOR_FIRING or TRIGGER_COLOR_READY
+                        local newText = rt.pressed and "TRIGGER — ยิง" or "TRIGGER ON"
                         if triggerBadge.Color ~= newColor then triggerBadge.Color = newColor end
                         if triggerBadge.Text ~= newText then triggerBadge.Text = newText end
                 end
@@ -1773,32 +1750,29 @@ CleanupManager:AddConn("TriggerKeybind", UserInputService.InputBegan:Connect(fun
         if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
         local wantKey = State.TriggerToggleKey or Enum.KeyCode.T
         if input.KeyCode == wantKey then
-                State.TriggerBot = not State.TriggerBot
-                if updateTriggerFloatVisual then updateTriggerFloatVisual() end
-                log("INFO", "Trigger Bot " .. (State.TriggerBot and "ON" or "OFF")
-                        .. " (toggle ด้วยปุ่ม " .. wantKey.Name .. ")")
+                toggleTriggerBot("toggle ด้วยปุ่ม " .. wantKey.Name)
         end
 end))
 
 local lastRenderTick = os.clock()
-local renderErrStreak = 0
 local function renderTick(deltaTime)
         local camera = getCamera()
         if not camera then return end
 
-        TriggerBot.update(camera)
+        local now = os.clock()
+        local vp = camera.ViewportSize
+        local screenCenter = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
+        TriggerBot.update(camera, screenCenter, vp, now)
 
         local userLook = camera.CFrame.LookVector
         local dtSafe = math.max(deltaTime, 1e-4)
         local userDps = math.huge
         if prevReadLook then
-                local uDot = math.clamp(userLook:Dot(prevReadLook), -1, 1)
-                local uDeg = math.deg(math.acos(uDot))
+                local uDeg = angleBetweenDeg(userLook, prevReadLook)
                 if uDeg > 0.05 then userDps = uDeg / dtSafe end
         end
         if lastWriteLook then
-                local wDot = math.clamp(userLook:Dot(lastWriteLook), -1, 1)
-                local wDeg = math.deg(math.acos(wDot))
+                local wDeg = angleBetweenDeg(userLook, lastWriteLook)
                 local againstPull = false
                 if prevReadLook then
                         local pullAxis = prevReadLook:Cross(lastWriteLook)
@@ -1830,9 +1804,9 @@ local function renderTick(deltaTime)
                 end
         end
         if State.DragSwitch and handAway and userDps > (State.FlickSpeed or 140) then
-                if not flickArmStart then flickArmStart = os.clock() end
-                if os.clock() - flickArmStart >= FLICK_ARM then
-                        flickUntil = os.clock() + FLICK_HOLD
+                if not flickArmStart then flickArmStart = now end
+                if now - flickArmStart >= FLICK_ARM then
+                        flickUntil = now + FLICK_HOLD
                 end
         else
                 flickArmStart = nil
@@ -1845,8 +1819,6 @@ local function renderTick(deltaTime)
                 zoomSmoothed += (zoomRaw - zoomSmoothed) * (1 - math.exp(-deltaTime / ZOOM_TAU))
         end
 
-        local vp = camera.ViewportSize
-        local screenCenter = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
         local scaledFOV = State.FOV * (vp.Y / 1080)
 
         if State.ShowFOV then
@@ -1865,11 +1837,9 @@ local function renderTick(deltaTime)
                 return
         end
 
-        if State.DragSwitch and os.clock() < flickUntil then
+        if State.DragSwitch and now < flickUntil then
                 if TargetService.CurrentTarget then
-                        switchAwayPlayer = TargetService.CurrentTarget
-                        switchCooldownUntil = os.clock() + FLICK_SWITCH_COOLDOWN
-                        TargetService:ReleaseTarget()
+                        banTargetAndRelease(TargetService.CurrentTarget, FLICK_SWITCH_COOLDOWN)
                 end
                 steerInfluence = 1
                 steerHoldStart = nil
@@ -1877,7 +1847,7 @@ local function renderTick(deltaTime)
                 return
         end
 
-        if switchAwayPlayer and os.clock() >= switchCooldownUntil then
+        if switchAwayPlayer and now >= switchCooldownUntil then
                 switchAwayPlayer = nil
         end
 
@@ -1888,22 +1858,18 @@ local function renderTick(deltaTime)
                         targetGraceUntil = 0
                 else
                         if targetGraceUntil == 0 then
-                                targetGraceUntil = os.clock() + TARGET_GRACE
+                                targetGraceUntil = now + TARGET_GRACE
                         end
                         local part = TargetService.TargetPart
-                        local onScreen = false
-                        if part then
-                                local sp, isOn = camera:WorldToViewportPoint(part.Position)
-                                onScreen = isOn and sp.Z > 0
-                        end
-                        if not onScreen or os.clock() >= targetGraceUntil then
+                        local onScreen = part and screenDistSq(camera, part.Position, screenCenter) ~= nil
+                        if not onScreen or now >= targetGraceUntil then
                                 TargetService:ReleaseTarget()
                         end
                 end
         end
 
         if not TargetService.CurrentTarget then
-                TargetService:AcquireTarget(camera, screenCenter, scaledFOV)
+                TargetService:AcquireTarget(camera, screenCenter, scaledFOV, now)
         end
 
         if State.SwitchAssist and TargetService.CurrentTarget then
@@ -1920,21 +1886,17 @@ local function renderTick(deltaTime)
 
                 local desiredDirection = safeUnit(targetPos - shooterPos)
                 if desiredDirection then
-                        local dot = math.clamp(camera.CFrame.LookVector:Dot(desiredDirection), -1, 1)
-                        local errDeg = math.deg(math.acos(dot))
+                        local errDeg = angleBetweenDeg(camera.CFrame.LookVector, desiredDirection)
                         local errScaled = errDeg * zoomScale
                         local gain = State.TrackBoost or 1.5
 
-                        if os.clock() - lastAimWriteClock > 0.1 then
+                        if now - lastAimWriteClock > 0.1 then
                                 prevDesiredDir = nil
                                 desSmoothed = 0
                         end
                         local desAngDps = 0
-                        if prevDesiredDir then
-                                local dDot = math.clamp(prevDesiredDir:Dot(desiredDirection), -1, 1)
-                                if dDot < 0.9999995 then
-                                        desAngDps = math.deg(math.acos(dDot)) / dtSafe
-                                end
+                        if prevDesiredDir and prevDesiredDir:Dot(desiredDirection) < 0.9999995 then
+                                desAngDps = angleBetweenDeg(prevDesiredDir, desiredDirection) / dtSafe
                         end
                         prevDesiredDir = desiredDirection
                         desSmoothed += (desAngDps - desSmoothed) * (1 - math.exp(-dtSafe / DES_ANG_TAU))
@@ -1947,7 +1909,6 @@ local function renderTick(deltaTime)
                         if errDeg < AIM_MICRO_SMOOTH_DEG then
                                 alpha *= AIM_MICRO_MIN + (1 - AIM_MICRO_MIN) * (errDeg / AIM_MICRO_SMOOTH_DEG)
                         end
-
                         local maxStepDps = (MAX_STEP_BASE + State.Smoothness * MAX_STEP_SPAN) * zoomScale
                         alpha = math.min(alpha, (maxStepDps * sdt) / math.max(errDeg, 0.05))
 
@@ -1963,12 +1924,10 @@ local function renderTick(deltaTime)
                                 and prevErrDeg ~= nil and errDeg > prevErrDeg + 0.05
                                 and not handAssisting
                         if steering then
-                                if not steerHoldStart then steerHoldStart = os.clock() end
-                                if State.DragSwitch and os.clock() - steerHoldStart >= STEER_HOLD then
-                                        switchAwayPlayer = TargetService.CurrentTarget
-                                        switchCooldownUntil = os.clock() + FLICK_SWITCH_COOLDOWN
-                                        TargetService:ReleaseTarget()
-                                        flickUntil = os.clock() + FLICK_HOLD
+                                if not steerHoldStart then steerHoldStart = now end
+                                if State.DragSwitch and now - steerHoldStart >= STEER_HOLD then
+                                        banTargetAndRelease(TargetService.CurrentTarget, FLICK_SWITCH_COOLDOWN)
+                                        flickUntil = now + FLICK_HOLD
                                         return
                                 end
                         else
@@ -1985,34 +1944,25 @@ local function renderTick(deltaTime)
                                 if ok and newCFrame then
                                         camera.CFrame = newCFrame
                                         lastWriteLook = smoothDirection
-                                        lastAimWriteClock = os.clock()
+                                        lastAimWriteClock = now
                                 end
                         end
                         prevErrDeg = errDeg
                 end
         end
-
 end
 
 local function connectRenderLoop()
-        CleanupManager:AddConn("RenderStep", RunService.RenderStepped:Connect(function(deltaTime)
+        connectGuardedLoop("RenderStep", "aim loop", RunService.RenderStepped, function(deltaTime)
                 lastRenderTick = os.clock()
-                local ok, err = xpcall(renderTick, traceFn, deltaTime)
-                if ok then
-                        renderErrStreak = 0
-                else
-                        renderErrStreak += 1
-                        if renderErrStreak == 10 then
-                                log("ERROR", "aim loop error: " .. tostring(err))
-                                if setStickyStatus then
-                                        setStickyStatus("aim error: " .. tostring(err):sub(1, 40))
-                                end
-                        end
-                end
-        end))
+                renderTick(deltaTime)
+        end, 10)
 end
 connectRenderLoop()
 
+-- ==========================================
+-- 10. LOAD REPORT
+-- ==========================================
 setGlxStatus("โหลดครบทุกระบบ — พร้อมใช้")
 
 local stickyMsg, stickyUntil = nil, 0
@@ -2059,6 +2009,9 @@ do
         end))
 end
 
+-- ==========================================
+-- 11. SELF-TEST
+-- ==========================================
 do
         local passed, failed = 0, 0
         local function expect(name, cond)
@@ -2104,12 +2057,22 @@ do
                 table.concat(backendOrder(true, "Auto"), ",") == "VirtualUser,Press")
         expect("Auto PC = Press → VIM → VirtualUser",
                 table.concat(backendOrder(false, "Auto"), ",") == "Press,VIM,VirtualUser")
-        expect("บังคับ VIM = ได้ตามสั่ง (รับความเสี่ยงเอง)",
+        expect("บังคับ VIM = ได้ตามสั่ง",
                 table.concat(backendOrder(true, "VIM"), ",") == "VIM")
         expect("บังคับ Press = Press เดียว",
                 table.concat(backendOrder(false, "Press"), ",") == "Press")
         expect("ค่าไม่รู้จัก = ถือเป็น Auto",
                 table.concat(backendOrder(true, "ค่าแปลก"), ",") == "VirtualUser,Press")
+
+        local mockCam = { WorldToViewportPoint = function(_, p)
+                return Vector3.new(p.X + 3, p.Y + 4, 5), true
+        end }
+        expect("ระยะ²บนจอ 3-4 = 25", screenDistSq(mockCam, Vector3.new(0, 0, 0), Vector2.new(0, 0)) == 25)
+        local mockOffCam = { WorldToViewportPoint = function() return Vector3.new(9, 9, 9), false end }
+        expect("จุดนอกจอ = nil", screenDistSq(mockOffCam, Vector3.new(0, 0, 0), Vector2.new(0, 0)) == nil)
+
+        expect("มุมทิศเดียวกัน = 0°", angleBetweenDeg(Vector3.xAxis, Vector3.xAxis) < 1e-9)
+        expect("มุมตั้งฉาก = 90°", math.abs(angleBetweenDeg(Vector3.xAxis, Vector3.yAxis) - 90) < 1e-9)
 
         log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
 end
