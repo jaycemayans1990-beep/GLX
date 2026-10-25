@@ -1,43 +1,51 @@
--- Luau | glx_aimbot_v4_6.lua | Roblox executor (Synapse-style env)[span_2](start_span)[span_2](end_span)
+-- Luau | glx_aimbot_v4_7.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.6 — ZOOM SETTLE: แก้ "ซูมแล้วเป้าแกว่ง + ยิงไม่ค่อยโดน")[span_3](start_span)[span_3](end_span)
--- - [v4.6] ผู้ใช้รายงาน: ซูมผ่านกล้องแล้วเป้าแกว่ง ๆ ยิงไม่ค่อยแม่น ไม่เหมือนตอนไม่ซูม —[span_4](start_span)[span_4](end_span)
---   ต้นตอ: ตอนซูม zoomScale (สูงสุด 5×) คูณเข้าความเร็วปิดท้ายใกล้เป้าทุกตัว → alpha/เฟรมแทบ 1.0[span_5](start_span)[span_5](end_span)
---   = จุดเล็งสะท้อน jitter ของ prediction (velocity replicated แบบบันได ~20Hz) + head-bob ออกบนจอ[span_6](start_span)[span_6](end_span)
---   ทันที (ซูมลึก px ต่อองศาเยอะ = แกว่งเห็นชัด) และโซน micro-smooth เดิมกว้างแค่ 0.4° คงที่ = ช่วยไม่ทัน[span_7](start_span)[span_7](end_span)
---     (1) โซน settle ใกล้เป้ากว้างตามซูม: 0.4° × zoom (สูงสุด 5×) + floor ลึกลงตามซูม[span_8](start_span)[span_8](end_span)
---         (settleAlphaFactor — pure function + self-test 4 เคส; ที่ไม่ซูม = พฤติกรรม v3.9 เดิมเป๊ะ)[span_9](start_span)[span_9](end_span)
---     (2) leadTau อ้าง τ โซน settle (SETTLE_SPEED_* ไม่คูณซูม) แทน baseRate — เดิมซูมลึก lead[span_10](start_span)[span_10](end_span)
---         เหลือ ~6ms = จุดเล็งตามหลังเป้าที่เคลื่อนที่ตอนซูม (ยิงข้ามหลัง)[span_11](start_span)[span_11](end_span)
---     (3) HOLD จุดเล็ง: เข้าใกล้ < AIM_HOLD_DEG + จุดเล็งไม่กวาดเร็ว + มือไม่ลาก = งดเขียนกล้องเฟรมนั้น[span_12](start_span)[span_12](end_span)
---         กล้องแปะนิ่งบนเป้า → คลิกเอง/trigger bot โดนจริง (หลุดโซนเองเมื่อเป้าขยับ)[span_13](start_span)[span_13](end_span)
--- - [v4.5] แก้ "รันสคริปต์ไม่ขึ้นอะไรเลย" (v4.4) — ตรวจ v4.4 ละเอียดแล้วตัวโค้ดปกติ:[span_14](start_span)[span_14](end_span)
---   syntax ผ่าน parser จริง / จุดแก้ lag ถูกต้อง / ไม่มี error ตอนโหลดจากโค้ดที่เปลี่ยน —[span_15](start_span)[span_15](end_span)
---   error ใน console ของผู้ใช้ ("gWgWYzqzDfOYZOEYG:1: attempt to call a nil value") เป็น chunk[span_16](start_span)[span_16](end_span)
---   ชื่อสุ่ม line 1 ซึ่งไม่ตรงกับโครงสร้างไฟล์เรา (บรรทัด 1 เป็น comment) = น่าจะมาจากสคริปต์[span_17](start_span)[span_17](end_span)
---   อื่นที่รันค้าง (IY/Dex/HD Admin/loader) — แต่สคริปต์เราก็มีจุดตายเงียบจริง จึงอุดครบ:[span_18](start_span)[span_18](end_span)
---     (1) HARDEN getgenv: จุดเรียก getgenv() ตรง ๆ ก่อนสร้าง UI (บล็อกเก็บรอบเก่า) = จุดตาย[span_19](start_span)[span_19](end_span)
---         เงียบถ้าสภาพแวดล้อมไม่ครบ → อ้างผ่าน local G (มี getgenv = ตารางเดียวกัน พฤติกรรม[span_20](start_span)[span_20](end_span)
---         ไม่เปลี่ยน / ไม่มี = ใช้ตารางว่าง ข้ามการเก็บรอบเก่า แต่โหลดต่อได้ถึง UI)[span_21](start_span)[span_21](end_span)
---     (2) BOOT WATCHDOG: จด phase ตลอดการโหลด (start → เก็บรอบเก่า → UI → ลูป → done) —[span_22](start_span)[span_22](end_span)
---         8 วิยังไม่ถึง done = ตัวอักษรแดงมุมซ้ายบนจอ (Drawing lib ใช้ได้แม้ ScreenGui ติดไม่ได้)[span_23](start_span)[span_23](end_span)
---         + warn บอกขั้นที่ค้าง = ไม่มีว่า "ไม่ขึ้นอะไรเลย" โดยไม่มีทางรู้ตัวอีก[span_24](start_span)[span_24](end_span)
---     (3) EOF SENTINEL: บรรทัดสุดท้ายคือคอมเมนต์ sentinel — paste ครบต้องเห็นท้ายสุด (ไฟล์[span_25](start_span)[span_25](end_span)
---         ~2,500 บรรทัด: มือถือวางไม่ครบ = parse error = จอว่าง ไม่มี error ให้อ่าน)[span_26](start_span)[span_26](end_span)
---     (4) คืน gate บล็อก self-test (comment บอกตั้ง getgenv().Glx_SelfTest ก่อน แต่บล็อกหลุด[span_27](start_span)[span_27](end_span)
---         gate รันทุกครั้งตั้งแต่ v3.8 — เจอตอนไล่หาสาเหตุ ไม่อันตรายแต่ console มีขยะ)[span_28](start_span)[span_28](end_span)
---     (5) ตัด changelog รุ่นเก่าออกจากหัวไฟล์ (ประวัติเต็มอยู่ที่ worklog.md) = ไฟล์เบาลง ~11KB[span_29](start_span)[span_29](end_span)
---         ลดโอกาสวางสคริปต์ไม่ครบบนมือถือ[span_30](start_span)[span_30](end_span)
--- - [v4.4] LAG FIX: กระจายงานหนักออกจากเฟรม (พฤติกรรมเล็ง/ยิง/ESP คงเดิม):[span_31](start_span)[span_31](end_span)
---     (1) ต้นตอ "แลคเป็นจังหวะ": ESP วัด visibility ทุกคนพร้อมกันทุก 0.35 วิ = raycast burst[span_32](start_span)[span_32](end_span)
---         → จำกัดงบ ⌈N/10⌉ คน/tick (30Hz) ครบทุกคนพอดีในรอบ กระจายลื่น + ส่ง Head ที่แคชไว้[span_33](start_span)[span_33](end_span)
---     (2) hasActiveWeapon แคช 0.15 วิ (เดิม FindFirstChildOfClass("Tool") ≈120 ครั้ง/วิ)[span_34](start_span)[span_34](end_span)
---     (3) getPing แคช 0.5 วิ (เดิม pcall+GetNetworkPing ทุกเฟรมขณะล็อค)[span_35](start_span)[span_35](end_span)
---     (4) os.clock() ซ้ำในลูก — TriggerBot.update / findBestCandidate รับ now จาก renderTick[span_36](start_span)[span_36](end_span)
---     (5) GetTargetPart ใช้แคช Root/Head ของ PlayerCache + 캐ช Head ใน getComponents[span_37](start_span)[span_37](end_span)
--- - ประวัติรุ่นก่อน (ฉบับเต็มใน worklog.md): v4.3 audit BUG/PERF/DRY 10 จุด | v4.2 มือถืองด VIM[span_38](start_span)[span_38](end_span)
---   กันเกมปิดเอง + backend ล้มสลับเอง | v4.1 ปุ่มลอย TRG | v4.0 trigger bot จังหวะ "แตะวน[span_39](start_span)"[span_39](end_span)
---   | v3.9 ไล่เป้าเร็วไม่หลุด/ล็อคไม่แกว่ง | v3.8 รีแฟกเตอร์ตามมาตรฐาน (hook-free สืบจาก v3.3)[span_40](start_span)[span_40](end_span)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.7 — DROP COMP: แก้ "ยิงดรอปต่ำกว่าเป้า/แม่นน้อยลง")
+-- - [v4.7] ผู้ใช้รายงาน: ความแม่นน้อยลง Prediction ทำนายดรอปลง (จุดตกต่ำกว่าเป้า) —
+--   ต้นตอ: สมการชดเชยดรอปล็อค 100% ตลอด — ถ้าความเร็วกระสุนจริงของเกมช้ากว่าที่เดา
+--   (Auto หา config ไม่เจอ = เดา 5000) ดรอปจริงจะมากกว่าชดเชย = กระสุนตกต่ำกว่าเป้าเสมอ
+--   (ยิ่งไกล/ยิ่งซูมยิ่งเห็นชัด — ตอนชิด drop น้อยจนมองไม่เห็น จึงรู้สึก "ไม่ซูมแม่นกว่า")
+--     (1) สไลเดอร์ Drop Comp (%) 0-150 ปรับสดได้: ต่ำกว่าเป้า = เพิ่ม (130-150) /
+--         สูงกว่าเป้า = ลด (50-80) / เกมกระสุนตรง (hitscan) = 0
+--     (2) เพดาน zoomScale 5 → 8 — กล้องซูมลึกเกิน 5x (FOV < 14) เดิมโดน cap
+--         = กล้องไล่ช้ากว่าสิ่งที่เห็นบนจอ ตามเป้าไม่ทัน (โซน settle ยังเพดาน 5× เดิม)
+-- - [v4.6] ผู้ใช้รายงาน: ซูมผ่านกล้องแล้วเป้าแกว่ง ๆ ยิงไม่ค่อยแม่น ไม่เหมือนตอนไม่ซูม —
+--   ต้นตอ: ตอนซูม zoomScale (สูงสุด 5×) คูณเข้าความเร็วปิดท้ายใกล้เป้าทุกตัว → alpha/เฟรมแทบ 1.0
+--   = จุดเล็งสะท้อน jitter ของ prediction (velocity replicated แบบบันได ~20Hz) + head-bob ออกบนจอ
+--   ทันที (ซูมลึก px ต่อองศาเยอะ = แกว่งเห็นชัด) และโซน micro-smooth เดิมกว้างแค่ 0.4° คงที่ = ช่วยไม่ทัน
+--     (1) โซน settle ใกล้เป้ากว้างตามซูม: 0.4° × zoom (สูงสุด 5×) + floor ลึกลงตามซูม
+--         (settleAlphaFactor — pure function + self-test 4 เคส; ที่ไม่ซูม = พฤติกรรม v3.9 เดิมเป๊ะ)
+--     (2) leadTau อ้าง τ โซน settle (SETTLE_SPEED_* ไม่คูณซูม) แทน baseRate — เดิมซูมลึก lead
+--         เหลือ ~6ms = จุดเล็งตามหลังเป้าที่เคลื่อนที่ตอนซูม (ยิงข้ามหลัง)
+--     (3) HOLD จุดเล็ง: เข้าใกล้ < AIM_HOLD_DEG + จุดเล็งไม่กวาดเร็ว + มือไม่ลาก = งดเขียนกล้องเฟรมนั้น
+--         กล้องแปะนิ่งบนเป้า → คลิกเอง/trigger bot โดนจริง (หลุดโซนเองเมื่อเป้าขยับ)
+-- - [v4.5] แก้ "รันสคริปต์ไม่ขึ้นอะไรเลย" (v4.4) — ตรวจ v4.4 ละเอียดแล้วตัวโค้ดปกติ:
+--   syntax ผ่าน parser จริง / จุดแก้ lag ถูกต้อง / ไม่มี error ตอนโหลดจากโค้ดที่เปลี่ยน —
+--   error ใน console ของผู้ใช้ ("gWgWYzqzDfOYZOEYG:1: attempt to call a nil value") เป็น chunk
+--   ชื่อสุ่ม line 1 ซึ่งไม่ตรงกับโครงสร้างไฟล์เรา (บรรทัด 1 เป็น comment) = น่าจะมาจากสคริปต์
+--   อื่นที่รันค้าง (IY/Dex/HD Admin/loader) — แต่สคริปต์เราก็มีจุดตายเงียบจริง จึงอุดครบ:
+--     (1) HARDEN getgenv: จุดเรียก getgenv() ตรง ๆ ก่อนสร้าง UI (บล็อกเก็บรอบเก่า) = จุดตาย
+--         เงียบถ้าสภาพแวดล้อมไม่ครบ → อ้างผ่าน local G (มี getgenv = ตารางเดียวกัน พฤติกรรม
+--         ไม่เปลี่ยน / ไม่มี = ใช้ตารางว่าง ข้ามการเก็บรอบเก่า แต่โหลดต่อได้ถึง UI)
+--     (2) BOOT WATCHDOG: จด phase ตลอดการโหลด (start → เก็บรอบเก่า → UI → ลูป → done) —
+--         8 วิยังไม่ถึง done = ตัวอักษรแดงมุมซ้ายบนจอ (Drawing lib ใช้ได้แม้ ScreenGui ติดไม่ได้)
+--         + warn บอกขั้นที่ค้าง = ไม่มีว่า "ไม่ขึ้นอะไรเลย" โดยไม่มีทางรู้ตัวอีก
+--     (3) EOF SENTINEL: บรรทัดสุดท้ายคือคอมเมนต์ sentinel — paste ครบต้องเห็นท้ายสุด (ไฟล์
+--         ~2,500 บรรทัด: มือถือวางไม่ครบ = parse error = จอว่าง ไม่มี error ให้อ่าน)
+--     (4) คืน gate บล็อก self-test (comment บอกตั้ง getgenv().Glx_SelfTest ก่อน แต่บล็อกหลุด
+--         gate รันทุกครั้งตั้งแต่ v3.8 — เจอตอนไล่หาสาเหตุ ไม่อันตรายแต่ console มีขยะ)
+--     (5) ตัด changelog รุ่นเก่าออกจากหัวไฟล์ (ประวัติเต็มอยู่ที่ worklog.md) = ไฟล์เบาลง ~11KB
+--         ลดโอกาสวางสคริปต์ไม่ครบบนมือถือ
+-- - [v4.4] LAG FIX: กระจายงานหนักออกจากเฟรม (พฤติกรรมเล็ง/ยิง/ESP คงเดิม):
+--     (1) ต้นตอ "แลคเป็นจังหวะ": ESP วัด visibility ทุกคนพร้อมกันทุก 0.35 วิ = raycast burst
+--         → จำกัดงบ ⌈N/10⌉ คน/tick (30Hz) ครบทุกคนพอดีในรอบ กระจายลื่น + ส่ง Head ที่แคชไว้
+--     (2) hasActiveWeapon แคช 0.15 วิ (เดิม FindFirstChildOfClass("Tool") ≈120 ครั้ง/วิ)
+--     (3) getPing แคช 0.5 วิ (เดิม pcall+GetNetworkPing ทุกเฟรมขณะล็อค)
+--     (4) os.clock() ซ้ำในลูก — TriggerBot.update / findBestCandidate รับ now จาก renderTick
+--     (5) GetTargetPart ใช้แคช Root/Head ของ PlayerCache + 캐ช Head ใน getComponents
+-- - ประวัติรุ่นก่อน (ฉบับเต็มใน worklog.md): v4.3 audit BUG/PERF/DRY 10 จุด | v4.2 มือถืองด VIM
+--   กันเกมปิดเอง + backend ล้มสลับเอง | v4.1 ปุ่มลอย TRG | v4.0 trigger bot จังหวะ "แตะวน"
+--   | v3.9 ไล่เป้าเร็วไม่หลุด/ล็อคไม่แกว่ง | v3.8 รีแฟกเตอร์ตามมาตรฐาน (hook-free สืบจาก v3.3)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -56,7 +64,7 @@ do
 end
 
 local bootToken = {}
-G.GLX_BOOT = { phase = "start", token = bootToken, version = "v4.6" }
+G.GLX_BOOT = { phase = "start", token = bootToken, version = "v4.7" }
 local function bootPhase(p)
         if G.GLX_BOOT then G.GLX_BOOT.phase = p end
 end
@@ -65,7 +73,7 @@ task.delay(8, function()
         if not (boot and boot.token == bootToken) then return end
         if boot.phase == "done" then return end
         local stuckAt = boot.phase
-        warn("[GLX v4.6] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt
+        warn("[GLX v4.7] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt
                 .. " — เปิด console อ่าน error สีแดงบรรทัดสุดท้ายแล้วส่งมาให้")
         pcall(function()
                 if Drawing == nil then return end
@@ -87,7 +95,7 @@ task.delay(8, function()
         end)
 end)
 
-local LOG_PREFIX = "[GLX v4.6]"
+local LOG_PREFIX = "[GLX v4.7]"
 local function log(level, msg)
         local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
         if level == "INFO" then
@@ -178,13 +186,14 @@ local State = {
         Prediction = true,
         PredReactivity = 1.5,
         PredMaxSlew = 3.0,
+        DropComp = 100,
         TrackBoost = 1.5,
         LagComp = true,
         DragSwitch = true,
         FlickSpeed = 75,
         FreeSteer = true,
         SwitchAssist = true,
-        WeaponCheck = true,
+        WeaponCheck = false,
         TargetPartMode = "Head",
         PingCompensation = true,
         DropIsMultiplier = true,
@@ -232,7 +241,7 @@ local function getCamera() return Workspace.CurrentCamera end
 local DEFAULT_FOV = 70
 
 local function getZoomScale(camera)
-        return math.clamp(DEFAULT_FOV / math.max(camera.FieldOfView, 1), 1, 5)
+        return math.clamp(DEFAULT_FOV / math.max(camera.FieldOfView, 1), 1, 8)
 end
 
 local PING_TTL = 0.5
@@ -286,10 +295,7 @@ local function screenDistSq(camera, worldPos, screenCenter)
         return dx * dx + dy * dy
 end
 
-local WeaponService
-local setStickyStatus
-local toggleTriggerBot
-
+local WeaponService, setStickyStatus, toggleTriggerBot
 local setStatusFn = nil
 local function setGlxStatus(msg)
         log("INFO", msg)
@@ -297,7 +303,9 @@ local function setGlxStatus(msg)
                 pcall(setStatusFn, tostring(msg))
         end
 end
-
+-- ==========================================
+-- 3.6 UI CONSTRUCTION
+-- ==========================================
 local THEME = {
         Accent = Color3.fromRGB(0, 255, 153),
         AccentHex = "#00FF99",
@@ -340,7 +348,7 @@ ScreenGui.Name = "Glx_UI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.DisplayOrder = 999999
 if not parentGuiAnywhere(ScreenGui) then
-        log("ERROR", "ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด) — UI จะไม่แสดง")
+        log("ERROR", "ใส่ UI ลงเกมไม่ได้")
 end
 CleanupManager:AddInstance("MainUI", ScreenGui)
 bootPhase("โครง UI พร้อม")
@@ -730,12 +738,17 @@ createSlider("Pred Max Slew (s/s)", 0.5, 10, State.PredMaxSlew, 0.5, function(v)
         State.PredMaxSlew = v
 end)
 
+createSlider("Drop Comp (%)", 0, 150, State.DropComp, 5, function(v)
+        State.DropComp = v
+end)
+
 createToggle("Lag Comp", State.LagComp, function(v) State.LagComp = v end)
 createSlider("Catch-Up Boost", 0, 3, State.TrackBoost, 0.05, function(v)
         State.TrackBoost = v
 end)
 
 createToggle("Drag To Switch", State.DragSwitch, function(v) State.DragSwitch = v end)
+
 createToggle("Free Steer", State.FreeSteer, function(v) State.FreeSteer = v end)
 createToggle("Switch Assist", State.SwitchAssist, function(v) State.SwitchAssist = v end)
 createSlider("Flick Speed (°/s)", 60, 300, State.FlickSpeed, 5, function(v)
@@ -859,7 +872,6 @@ end
 -- 5. VISIBILITY SERVICE (Reuse RaycastParams)
 -- ==========================================
 local VisibilityService = {}
-
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
 RayParams.IgnoreWater = true
@@ -980,8 +992,7 @@ end
 
 CleanupManager:AddConn("PlayerRemovingCaches", Players.PlayerRemoving:Connect(function(player)
         PlayerCache[player] = nil
-end))
-
+end)) 
 local TARGET_GRACE = 0.35
 local KEEP_HYSTERESIS = 1.35
 local ZOOM_TAU = 0.08
@@ -1268,11 +1279,12 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
         local pingOffset = (State.PingCompensation and (getPing() * 0.5) or 0) + (leadTime or 0)
 
         local accelLeadCap = MAX_ACCEL_LEAD / (zoomScale or getZoomScale(getCamera()))
+        local dropComp = math.clamp(State.DropComp or 100, 0, 200) * 0.01
 
         local function f(t)
                 local totalT = t + pingOffset
                 local targetAtT = targetPos + (targetVel * totalT) + clampAccelLead(0.5 * targetAcc * (totalT ^ 2), accelLeadCap)
-                local bulletDropAtT = 0.5 * bulletGravityVec * (t ^ 2)
+                local bulletDropAtT = 0.5 * bulletGravityVec * (t ^ 2) * dropComp
                 local requiredDisplacement = targetAtT - shooterPos - bulletDropAtT
                 return (bulletSpeed * t) - requiredDisplacement.Magnitude
         end
@@ -1318,7 +1330,7 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
         local displacement = finalTargetPos - shooterPos
 
         if t_intercept > 0 then
-                local requiredVelocity = (displacement / t_intercept) - (0.5 * bulletGravityVec * t_intercept)
+                local requiredVelocity = (displacement / t_intercept) - (0.5 * bulletGravityVec * t_intercept * dropComp)
                 local finalUnit = safeUnit(requiredVelocity)
                 if finalUnit then return finalUnit end
         end
@@ -1354,7 +1366,6 @@ local function getPredictedPosition(targetPart, shooterPos, deltaTime, leadTime,
 
         return targetPos
 end
-
 -- ==========================================
 -- 8. ESP SERVICE (Throttle 30Hz, Ref-Cached)
 -- ==========================================
@@ -1556,7 +1567,7 @@ local function connectGuardedLoop(connName, reportLabel, signal, fn, reportAt)
                 else
                         errStreak += 1
                         if errStreak == reportAt then
-                                log("ERROR", reportLabel + " error: " .. tostring(err))
+                                log("ERROR", reportLabel .. " error: " .. tostring(err))
                                 if setStickyStatus then
                                         setStickyStatus(reportLabel:lower() .. " error: " .. tostring(err):sub(1, 40))
                                 end
@@ -1628,7 +1639,7 @@ do
                         Filled = false, Transparency = 0.7, NumSides = 3,
                         Remove = function() end
                 }
-                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด (ฟีเจอร์อื่นปกติ)")
+                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด")
         end
 end
 FOVCircle.Thickness = 1.5
@@ -1655,7 +1666,7 @@ local function hasActiveWeapon()
         return result
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog (ไม่มี hook เกม — input สังเคราะห์เฉพาะคลิกของ Trigger Bot [v4.2: มือถืองด VirtualInputManager กันเกมปิดเอง], default OFF — แตะปุ่มลอย TRG หรือกด T เปิด)")
+log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1752,7 +1763,7 @@ if type(G.GLX_TRIGGER_BACKEND) == "string" then
 end
 triggerBackendQueue = backendOrder(IS_TOUCH, forcedBackend)
 if not pickNextBackend(IS_TOUCH and "โหมดมือถือ — งด VirtualInputManager" or nil) then
-        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก (VirtualUser/mouse1press/VIM) — ฟีเจอร์นี้ใช้ไม่ได้ ระบบอื่นปกติ")
+        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก")
 end
 
 local function triggerDecision(now, onTarget, pressed, pressStart, lastRelease)
@@ -1775,7 +1786,7 @@ local function triggerBackendExhausted(contextMsg)
         State.TriggerBot = false
         triggerBackendQueue = backendOrder(IS_TOUCH, State.TriggerBackend)
         if updateTriggerFloatVisual then updateTriggerFloatVisual() end
-        log("ERROR", "Trigger Bot: " .. contextMsg .. " — ปิด trigger (แตะ TRG จะลองชุด backend ใหม่)")
+        log("ERROR", "Trigger Bot: " .. contextMsg)
         if setStickyStatus then setStickyStatus("trigger bot: " .. contextMsg) end
 end
 
@@ -1794,7 +1805,7 @@ toggleTriggerBot = function(source)
         State.TriggerBot = not State.TriggerBot
         if updateTriggerFloatVisual then updateTriggerFloatVisual() end
         if State.TriggerBot and firePress == nil then
-                log("WARN", "Trigger Bot ON แต่ไม่มี backend ส่งคลิก — ยิงไม่ได้")
+                log("WARN", "Trigger Bot ON แต่ไม่มี backend ส่งคลิก")
                 if setStickyStatus then setStickyStatus("trigger bot: ไม่มี backend ส่งคลิก") end
         end
         log("INFO", "Trigger Bot " .. (State.TriggerBot and "ON" or "OFF") .. " (" .. source .. ")")
@@ -1888,7 +1899,7 @@ CleanupManager:AddConn("TriggerKeybind", UserInputService.InputBegan:Connect(fun
         if input.KeyCode == wantKey then
                 toggleTriggerBot("toggle ด้วยปุ่ม " .. wantKey.Name)
         end
-end))
+end)) 
 local lastRenderTick = os.clock()
 local function renderTick(deltaTime)
         local camera = getCamera()
@@ -2185,7 +2196,7 @@ if G.Glx_SelfTest then
         expect("unit คงทิศเดิม", safeUnit(Vector3.new(3, 0, 0)):Dot(Vector3.xAxis) > 0.99)
 
         expect("zoom scale FOV 70 = 1", getZoomScale({ FieldOfView = 70 }) == 1)
-        expect("zoom scale ถูกเพดานที่ 5", getZoomScale({ FieldOfView = 0.1 }) == 5)
+        expect("zoom scale ถูกเพดานที่ 8", getZoomScale({ FieldOfView = 0.1 }) == 8)
 
         local fakeTarget = {
                 Position = Vector3.new(100, 0, 0),
@@ -2228,10 +2239,10 @@ if G.Glx_SelfTest then
         expect("มุมทิศเดียวกัน = 0°", angleBetweenDeg(Vector3.xAxis, Vector3.xAxis) < 1e-9)
         expect("มุมตั้งฉาก = 90°", math.abs(angleBetweenDeg(Vector3.xAxis, Vector3.yAxis) - 90) < 1e-9)
 
-        expect("settle ขอบโซน = 1 (ไม่กระตุก)", settleAlphaFactor(1.6, 1.6, 4) == 1)
+        expect("settle ขอบโซน = 1", settleAlphaFactor(1.6, 1.6, 4) == 1)
         expect("settle นอกโซน = 1", settleAlphaFactor(2.0, 1.6, 4) == 1)
         expect("settle ลึกซูม 4x = นุ่มกว่า hip", settleAlphaFactor(0.02, 1.6, 4) < 0.2)
-        expect("settle ไม่ซูม = พฤติกรรม v3.9 เดิม",
+        expect("settle ไม่ซูม = พฤติกรรมเดิม",
                 math.abs(settleAlphaFactor(0.2, 0.4, 1) - 0.65) < 1e-9)
 
         log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
@@ -2239,4 +2250,4 @@ end
 
 bootPhase("done")
 log("INFO", "boot complete — โค้ดถึงบรรทัดสุดท้ายครบ")
--- [GLX v4.6 EOF] บรรทัดสุดท้ายของไฟล์ — paste ครบต้องเห็นบรรทัดนี้ท้ายสุด[span_41](start_span)[span_41](end_span)
+-- [GLX v4.7 EOF]
