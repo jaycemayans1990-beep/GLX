@@ -1,6 +1,6 @@
--- Luau | glx_aimbot_v3_7.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v3_8.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v3.7 — ANTI-STICKY BUILD)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v3.8 — AUDIT FIX BUILD)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -17,7 +17,7 @@ if not LocalPlayer then
         end
 end
 if not LocalPlayer then
-        warn("[GLX v3.7] ไม่พบ LocalPlayer — รอผู้เล่นโหลดไม่สำเร็จ รันสคริปต์ใหม่อีกครั้งหลังเข้าเกม")
+        warn("[GLX v3.8] ไม่พบ LocalPlayer — รอผู้เล่นโหลดไม่สำเร็จ รันสคริปต์ใหม่อีกครั้งหลังเข้าเกม")
         return
 end
 
@@ -37,6 +37,14 @@ function CleanupManager:AddConn(name, conn)
         if self.Connections[name] then self.Connections[name]:Disconnect() end
         self.Connections[name] = conn
         return conn
+end
+
+function CleanupManager:RemoveConn(name)
+        local conn = self.Connections[name]
+        if conn then
+                self.Connections[name] = nil
+                pcall(conn.Disconnect, conn)
+        end
 end
 
 function CleanupManager:AddInstance(name, inst)
@@ -104,7 +112,7 @@ local State = {
         FOV = 100,
         ShowFOV = false,
         ESP = true,
-        ESPName = false
+        ESPName = true
 }
 
 local function getCamera() return Workspace.CurrentCamera end
@@ -218,12 +226,14 @@ local dragConnIndex = 0
 local function enableDrag(handle, target)
         local dragging = false
         local dragStart, startPos
+        local wasDragged = false
 
         dragConnIndex += 1
         CleanupManager:AddConn("DragBegan" .. dragConnIndex, handle.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1
                         or input.UserInputType == Enum.UserInputType.Touch then
                         dragging = true
+                        wasDragged = false
                         dragStart = input.Position
                         startPos = target.Position
                 end
@@ -242,12 +252,15 @@ local function enableDrag(handle, target)
                 if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
                         or input.UserInputType == Enum.UserInputType.Touch) then
                         local delta = input.Position - dragStart
+                        if delta.Magnitude >= 6 then wasDragged = true end
                         target.Position = UDim2.new(
                                 startPos.X.Scale, math.floor(startPos.X.Offset + delta.X + 0.5),
                                 startPos.Y.Scale, math.floor(startPos.Y.Offset + delta.Y + 0.5)
                         )
                 end
         end))
+
+        return function() return wasDragged end
 end
 
 local TitleBar = Instance.new("TextLabel")
@@ -280,11 +293,13 @@ setStatusFn = function(msg)
         StatusLabel.Text = tostring(msg)
 end
 
+local toggleBtnWasDragged = nil
 ToggleBtn.MouseButton1Click:Connect(function()
+        if toggleBtnWasDragged and toggleBtnWasDragged() then return end
         MainFrame.Visible = not MainFrame.Visible
 end)
 
-enableDrag(ToggleBtn, ToggleBtn)
+toggleBtnWasDragged = enableDrag(ToggleBtn, ToggleBtn)
 enableDrag(TitleBar, MainFrame)
 
 local ScrollFrame = Instance.new("ScrollingFrame")
@@ -303,6 +318,7 @@ UIList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 local currentLayoutOrder = 0
+local sliderDragIndex = 0
 
 local function createToggle(text, initialState, callback)
         currentLayoutOrder += 1
@@ -473,20 +489,24 @@ local function createSlider(text, min, max, default, step, callback)
 
                         update(input)
                         local moveConn, relConn
+                        sliderDragIndex += 1
+                        local gestureId = "SliderDrag" .. sliderDragIndex
                         moveConn = UserInputService.InputChanged:Connect(function(moveInp)
                                 if dragging and (moveInp.UserInputType == Enum.UserInputType.MouseMovement
                                         or moveInp.UserInputType == Enum.UserInputType.Touch) then
                                         update(moveInp)
                                 end
                         end)
+                        CleanupManager:AddConn(gestureId .. "Move", moveConn)
                         relConn = UserInputService.InputEnded:Connect(function(relInp)
                                 if relInp.UserInputType == Enum.UserInputType.MouseButton1
                                         or relInp.UserInputType == Enum.UserInputType.Touch then
                                         dragging = false
-                                        moveConn:Disconnect()
-                                        relConn:Disconnect()
+                                        CleanupManager:RemoveConn(gestureId .. "Move")
+                                        CleanupManager:RemoveConn(gestureId .. "End")
                                 end
                         end)
+                        CleanupManager:AddConn(gestureId .. "End", relConn)
                 end
         end)
 end
@@ -502,6 +522,7 @@ createToggle("Ping Compensation", State.PingCompensation, function(v) State.Ping
 
 createToggle("Drop Value Mode: Multiplier", State.DropIsMultiplier, function(v)
         State.DropIsMultiplier = v
+        if WeaponService and WeaponService.InvalidateCache then WeaponService:InvalidateCache() end
         WeaponService:UpdateAuto()
 end)
 
@@ -564,6 +585,10 @@ end
 
 local WeaponCache = setmetatable({}, { __mode = "k" })
 
+function WeaponService:InvalidateCache()
+        table.clear(WeaponCache)
+end
+
 function WeaponService:UpdateAuto()
         if not State.AutoBulletSpeed then return self:UpdateManual() end
 
@@ -571,7 +596,7 @@ function WeaponService:UpdateAuto()
         local tool = char and char:FindFirstChildOfClass("Tool")
 
         if not tool then
-                self.Speed = math.max(State.BulletSpeed or FALLBACK_SPEED, 1)
+                self.Speed = FALLBACK_SPEED
                 self.Gravity = workspace.Gravity
                 return
         end
@@ -589,7 +614,7 @@ function WeaponService:UpdateAuto()
         local acsSettings = tool:FindFirstChild("ACS_Settings")
                 or tool:FindFirstChild("Settings") or tool:FindFirstChild("Config")
 
-        local speed, gravity = State.BulletSpeed or FALLBACK_SPEED, workspace.Gravity
+        local speed, gravity = FALLBACK_SPEED, workspace.Gravity
 
         if acsSettings and acsSettings:IsA("ModuleScript") then
                 local success, config = pcall(require, acsSettings)
@@ -658,6 +683,7 @@ end
 -- 5. VISIBILITY SERVICE (Reuse RaycastParams)
 -- ==========================================
 local VisibilityService = {}
+
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
 RayParams.IgnoreWater = true
@@ -808,8 +834,13 @@ function TargetService:GetTargetPart(char)
                         if locked then return locked end
                 end
                 local name = RANDOM_PARTS[math.random(1, #RANDOM_PARTS)]
+                local picked = char:FindFirstChild(name)
+                if not picked then
+                        picked = root
+                        name = "HumanoidRootPart"
+                end
                 self.LockedPartName = name
-                return char:FindFirstChild(name) or root
+                return picked
         end
         return root
 end
@@ -952,7 +983,7 @@ local function clampAccelLead(v3, cap)
 end
 
 task.spawn(function()
-        while getgenv().Glx_Running and task.wait(10) do
+        while getgenv().Glx_Cleanup == CleanupManager and task.wait(10) do
                 for part in pairs(TargetStates) do
                         if typeof(part) ~= "Instance" or not part:IsDescendantOf(workspace) then
                                 TargetStates[part] = nil
@@ -1155,7 +1186,7 @@ local function getPredictedPosition(targetPart, shooterPos, deltaTime, leadTime,
         end
 
         local bulletSpeed = math.max(WeaponService.Speed, 1)
-        local aimDirection = solveInterceptValue and solveInterceptVector(shooterPos, targetPart, bulletSpeed, lastGravVec, deltaTime, leadTime, zoomScale) or nil
+        local aimDirection = solveInterceptVector(shooterPos, targetPart, bulletSpeed, lastGravVec, deltaTime, leadTime, zoomScale)
         if aimDirection then return shooterPos + (aimDirection * 10000) end
 
         return targetPos
@@ -1297,7 +1328,7 @@ function ESPService:ProcessESP()
                                                 if head then
                                                         local nt = entry.NameTag
                                                         if not nt or nt.Parent ~= char then
-                                                                entry.NameTag = buildNameTag(char, head, player.Name)
+                                                                entry.NameTag = buildNameTag(char, head, player.DisplayName or player.Name)
                                                                 nt = entry.NameTag
                                                         end
                                                         local color = entry.Visible and self.COLOR_VISIBLE or self.COLOR_OBSTRUCTED
@@ -1340,7 +1371,7 @@ local function connectESP()
                         else
                                 espErrStreak += 1
                                 if espErrStreak == 5 then
-                                        warn("[GLX v3.7] ESP tick error: " .. tostring(err))
+                                        warn("[GLX v3.8] ESP tick error: " .. tostring(err))
                                         if setStickyStatus then
                                                 setStickyStatus("ESP error: " .. tostring(err):sub(1, 40))
                                         end
@@ -1400,6 +1431,7 @@ FOVCircle.Thickness = 1.5
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Filled = false
 FOVCircle.Transparency = 0.7
+FOVCircle.NumSides = 64
 FOVCircle.Visible = false
 CleanupManager:AddDrawing("FOVCircle", FOVCircle)
 local function hasActiveWeapon()
@@ -1409,7 +1441,7 @@ local function hasActiveWeapon()
         return character:FindFirstChildOfClass("Tool") ~= nil
 end
 
-print("[GLX v3.7] โหลดสำเร็จ — aimbot + ESP + self-heal watchdog (ไม่มี hook / ไม่มี input สังเคราะห์)")
+print("[GLX v3.8] โหลดสำเร็จ — aimbot + ESP + self-heal watchdog (ไม่มี hook / ไม่มี input สังเคราะห์)")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1457,7 +1489,7 @@ local function renderTick(deltaTime)
         prevReadLook = userLook
         lastWriteLook = nil
 
-        if State.DragSwitch and userDps > (State.FlickSpeed or 140) then
+        if State.DragSwitch and userDps > (State.FlickSpeed or 90) then
                 if not flickArmStart then flickArmStart = os.clock() end
                 if os.clock() - flickArmStart >= FLICK_ARM then
                         flickUntil = os.clock() + FLICK_HOLD
@@ -1475,7 +1507,7 @@ local function renderTick(deltaTime)
 
         local vp = camera.ViewportSize
         local screenCenter = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
-        local scaledFOV = State.FOV * (vp.Y / 1080)
+        local scaledFOV = State.FOV * (vp.Y / 1080) / math.max(zoomSmoothed or 1, 1)
 
         if State.ShowFOV then
                 FOVCircle.Position = screenCenter
@@ -1599,7 +1631,7 @@ local function connectRenderLoop()
                 else
                         renderErrStreak += 1
                         if renderErrStreak == 10 then
-                                warn("[GLX v3.7] aim loop error: " .. tostring(err))
+                                warn("[GLX v3.8] aim loop error: " .. tostring(err))
                                 if setStickyStatus then
                                         setStickyStatus("aim error: " .. tostring(err):sub(1, 40))
                                 end
@@ -1615,7 +1647,7 @@ local stickyMsg, stickyUntil = nil, 0
 setStickyStatus = function(msg)
         stickyMsg = tostring(msg)
         stickyUntil = os.clock() + 6
-        warn("[GLX v3.7] " .. stickyMsg)
+        warn("[GLX v3.8] " .. stickyMsg)
         if StatusLabel then StatusLabel.Text = stickyMsg end
 end
 
