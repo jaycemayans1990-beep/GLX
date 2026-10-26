@@ -1,6 +1,6 @@
--- Luau | glx_aimbot_v5_0.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v3_7.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v5.0 — AUTO BALLISTICS วัดกระสุนจริง REAL-TIME + ลบ TRIGGER BOT)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v3.7 — ANTI-STICKY BUILD)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -8,56 +8,6 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
-
-local G = {}
-do
-        local okG, envG = pcall(function()
-                if type(getgenv) == "function" then return getgenv() end
-                return nil
-        end)
-        if okG and type(envG) == "table" then G = envG end
-end
-
-local bootToken = {}
-G.GLX_BOOT = { phase = "start", token = bootToken, version = "v5.0" }
-local function bootPhase(p)
-        if G.GLX_BOOT then G.GLX_BOOT.phase = p end
-end
-task.delay(8, function()
-        local boot = G.GLX_BOOT
-        if not (boot and boot.token == bootToken) then return end
-        if boot.phase == "done" then return end
-        local stuckAt = boot.phase
-        warn("[GLX v5.0] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt)
-        pcall(function()
-                if Drawing == nil then return end
-                local beacon = Drawing.new("Text")
-                beacon.Text = "GLX BOOT FAILED: " .. stuckAt .. " — ดู console"
-                beacon.Size = 16
-                beacon.Color = Color3.fromRGB(255, 70, 70)
-                beacon.Position = Vector2.new(10, 10)
-                beacon.Outline = true
-                beacon.Visible = true
-                task.spawn(function()
-                        for _ = 1, 20 do
-                                local b = G.GLX_BOOT
-                                if b and b.phase == "done" then break end
-                                task.wait(1)
-                        end
-                        pcall(function() beacon:Remove() end)
-                end)
-        end)
-end)
-
-local LOG_PREFIX = "[GLX v5.0]"
-local function log(level, msg)
-        local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
-        if level == "INFO" then
-                print(line)
-        else
-                warn(line)
-        end
-end
 
 if not LocalPlayer then
         for _ = 1, 100 do
@@ -67,11 +17,9 @@ if not LocalPlayer then
         end
 end
 if not LocalPlayer then
-        bootPhase("ไม่พบ LocalPlayer — ยกเลิกโหลด")
-        log("ERROR", "ไม่พบ LocalPlayer — รอผู้เล่นโหลดไม่สำเร็จ รันสคริปต์ใหม่อีกครั้งหลังเข้าเกม")
+        warn("[GLX v3.7] ไม่พบ LocalPlayer — รอผู้เล่นโหลดไม่สำเร็จ รันสคริปต์ใหม่อีกครั้งหลังเข้าเกม")
         return
 end
-bootPhase("LocalPlayer พร้อม")
 
 local FALLBACK_SPEED = 3000
 
@@ -108,7 +56,7 @@ function CleanupManager:AddCustomCleanup(func)
 end
 
 function CleanupManager:CleanAll()
-        G.Glx_Running = false
+        getgenv().Glx_Running = false
         for _, conn in pairs(self.Connections) do pcall(conn.Disconnect, conn) end
         for _, inst in pairs(self.Instances) do pcall(inst.Destroy, inst) end
         for _, draw in pairs(self.Drawings) do pcall(draw.Remove, draw) end
@@ -120,15 +68,14 @@ function CleanupManager:CleanAll()
         table.clear(self.CustomCleanups)
 end
 
-bootPhase("เก็บรอบเก่า")
-if G.SnyX_Cleanup and type(G.SnyX_Cleanup.CleanAll) == "function" then
-        pcall(G.SnyX_Cleanup.CleanAll, G.SnyX_Cleanup)
+if getgenv().SnyX_Cleanup and type(getgenv().SnyX_Cleanup.CleanAll) == "function" then
+        pcall(getgenv().SnyX_Cleanup.CleanAll, getgenv().SnyX_Cleanup)
 end
-if G.Glx_Cleanup and type(G.Glx_Cleanup.CleanAll) == "function" then
-        pcall(G.Glx_Cleanup.CleanAll, G.Glx_Cleanup)
+if getgenv().Glx_Cleanup and type(getgenv().Glx_Cleanup.CleanAll) == "function" then
+        pcall(getgenv().Glx_Cleanup.CleanAll, getgenv().Glx_Cleanup)
 end
-G.Glx_Cleanup = CleanupManager
-G.Glx_Running = true
+getgenv().Glx_Cleanup = CleanupManager
+getgenv().Glx_Running = true
 
 -- ==========================================
 -- 2. STATE (Global Configuration)
@@ -140,12 +87,10 @@ local State = {
         Prediction = true,
         PredReactivity = 1.5,
         PredMaxSlew = 3.0,
-        DropComp = 0,
-        PredStrength = 1.0,
         TrackBoost = 1.5,
         LagComp = true,
         DragSwitch = true,
-        FlickSpeed = 75,
+        FlickSpeed = 90,
         FreeSteer = true,
         SwitchAssist = true,
         WeaponCheck = false,
@@ -153,55 +98,26 @@ local State = {
         PingCompensation = true,
         DropIsMultiplier = true,
         AutoBulletSpeed = true,
-        AutoBallistics = true,
         BulletSpeed = 5000,
         BulletGravity = workspace.Gravity,
-        Smoothness = 1,
+        Smoothness = 0.8,
         FOV = 100,
         ShowFOV = false,
         ESP = true,
-        ESPName = true,
+        ESPName = false
 }
-
-local BAN_OVERRIDE_RATIO = 0.12
-local ESP_VIS_INTERVAL = 0.35
-local ESP_VIS_BUDGET_DIV = 10
-local PIERCE_TRANSPARENCY = 0.8
-local AIM_PROJECTION_DIST = 10000
-local MAX_TRACK_DPS = 70
-local MAX_STEP_BASE = 120
-local MAX_STEP_SPAN = 240
-local DES_ANG_TAU = 0.08
-local DES_ANG_MAX_DPS = 400
-local TRACK_MARGIN = 1.25
-local AIM_MICRO_SMOOTH_DEG = 0.4
-local AIM_MICRO_MIN = 0.3
-local SETTLE_SPEED_BASE = 8
-local SETTLE_SPEED_SPAN = 32
-local AIM_HOLD_DEG = 0.12
-local DES_ANG_HOLD_MAX = 30
-local AIM_POS_TAU_BASE = 0.02
-local AIM_POS_TAU_ZOOM = 0.025
-local WATCHDOG_TIMEOUT = 2
-local VIS_HEAD_PROBE = 0.35
 
 local function getCamera() return Workspace.CurrentCamera end
 local DEFAULT_FOV = 70
 
 local function getZoomScale(camera)
-        return math.clamp(DEFAULT_FOV / math.max(camera.FieldOfView, 1), 1, 8)
+        return math.clamp(DEFAULT_FOV / math.max(camera.FieldOfView, 1), 1, 5)
 end
 
-local PING_TTL = 0.5
-local pingCache = { value = 0.025, expires = 0 }
 local function getPing()
         if not LocalPlayer then return 0.025 end
-        local nowClock = os.clock()
-        if nowClock < pingCache.expires then return pingCache.value end
         local success, ping = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
-        pingCache.value = (success and type(ping) == "number") and ping or 0.025
-        pingCache.expires = nowClock + PING_TTL
-        return pingCache.value
+        return (success and type(ping) == "number") and ping or 0.025
 end
 
 -- ==========================================
@@ -224,50 +140,24 @@ local function safeUnit(v3)
         return isFiniteVec3(unit) and unit or nil
 end
 
-local function angleBetweenDeg(a, b)
-        return math.deg(math.acos(math.clamp(a:Dot(b), -1, 1)))
-end
-
-local function settleAlphaFactor(errDeg, microDeg, zoomSettle)
-        local micro = math.max(microDeg, 1e-6)
-        if errDeg >= micro then return 1 end
-        local floorK = AIM_MICRO_MIN / (1 + (zoomSettle - 1) * 0.45)
-        return floorK + (1 - floorK) * (errDeg / micro)
-end
-
-local function screenDistSq(camera, worldPos, screenCenter)
-        local sp, onScreen = camera:WorldToViewportPoint(worldPos)
-        if not (onScreen and sp.Z > 0) then return nil end
-        local dx = sp.X - screenCenter.X
-        local dy = sp.Y - screenCenter.Y
-        return dx * dx + dy * dy
-end
-
-local WeaponService, setStickyStatus
+local WeaponService
+local setStickyStatus
 local setStatusFn = nil
 local function setGlxStatus(msg)
-        log("INFO", msg)
+        print("[GLX] " .. tostring(msg))
         if setStatusFn then
                 pcall(setStatusFn, tostring(msg))
         end
 end
 
-local THEME = {
-        Accent = Color3.fromRGB(0, 255, 153),
-        AccentHex = "#00FF99",
-        AccentDim = Color3.fromRGB(0, 115, 95),
-        BGDark = Color3.fromRGB(20, 20, 20),
-        BGTitle = Color3.fromRGB(30, 30, 30),
-        BG = Color3.fromRGB(28, 28, 28),
-        Stroke = Color3.fromRGB(45, 45, 45),
-        Text = Color3.fromRGB(220, 220, 220),
-        TextDim = Color3.fromRGB(180, 180, 180),
-        Track = Color3.fromRGB(50, 50, 50),
-        ToggleOn = Color3.fromRGB(50, 150, 50),
-        ToggleOff = Color3.fromRGB(150, 50, 50)
-}
-
-local function parentGuiAnywhere(gui)
+-- ==========================================
+-- 3.6 UI CONSTRUCTION
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Glx_UI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 999999
+do
         local parents = {}
         if type(gethui) == "function" then
                 local okH, h = pcall(gethui)
@@ -282,29 +172,18 @@ local function parentGuiAnywhere(gui)
                 end)
         end
         for _, par in ipairs(parents) do
-                local okP = pcall(function() gui.Parent = par end)
-                if okP and gui.Parent ~= nil then break end
+                local okP = pcall(function() ScreenGui.Parent = par end)
+                if okP and ScreenGui.Parent ~= nil then break end
         end
-        return gui.Parent ~= nil
-end
-
-bootPhase("สร้าง UI หลัก")
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "Glx_UI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.DisplayOrder = 999999
-if not parentGuiAnywhere(ScreenGui) then
-        log("ERROR", "ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด) — UI จะไม่แสดง")
 end
 CleanupManager:AddInstance("MainUI", ScreenGui)
-bootPhase("โครง UI พร้อม")
 
 local ToggleBtn = Instance.new("TextButton")
 ToggleBtn.Size = UDim2.new(0, 45, 0, 45)
 ToggleBtn.Position = UDim2.new(0, 28, 0, 130)
 ToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 ToggleBtn.Text = "Glx"
-ToggleBtn.TextColor3 = THEME.Accent
+ToggleBtn.TextColor3 = Color3.fromRGB(0, 255, 153)
 ToggleBtn.Font = Enum.Font.GothamBold
 ToggleBtn.TextSize = 18
 ToggleBtn.Active = true
@@ -315,14 +194,14 @@ btnCorner.CornerRadius = UDim.new(0, 8)
 btnCorner.Parent = ToggleBtn
 
 local btnStroke = Instance.new("UIStroke")
-btnStroke.Color = THEME.Accent
+btnStroke.Color = Color3.fromRGB(0, 255, 153)
 btnStroke.Thickness = 2
 btnStroke.Parent = ToggleBtn
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 290, 0, 400)
 MainFrame.Position = UDim2.new(0, 220, 0, 140)
-MainFrame.BackgroundColor3 = THEME.BGDark
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.Active = true
 MainFrame.Visible = false
 MainFrame.Parent = ScreenGui
@@ -332,7 +211,7 @@ mainCorner.CornerRadius = UDim.new(0, 8)
 mainCorner.Parent = MainFrame
 
 local mainStroke = Instance.new("UIStroke")
-mainStroke.Color = THEME.Stroke
+mainStroke.Color = Color3.fromRGB(45, 45, 45)
 mainStroke.Parent = MainFrame
 
 local dragConnIndex = 0
@@ -373,9 +252,9 @@ end
 
 local TitleBar = Instance.new("TextLabel")
 TitleBar.Size = UDim2.new(1, 0, 0, 35)
-TitleBar.BackgroundColor3 = THEME.BGTitle
+TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 TitleBar.RichText = true
-TitleBar.Text = "  <font color=\"" .. THEME.AccentHex .. "\">GLX</font> ADVANCED SYSTEM"
+TitleBar.Text = "  <font color=\"#00FF99\">GLX</font> ADVANCED SYSTEM"
 TitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleBar.Font = Enum.Font.GothamBold
 TitleBar.TextSize = 15
@@ -391,7 +270,7 @@ StatusLabel.Size = UDim2.new(1, -12, 0, 16)
 StatusLabel.Position = UDim2.new(0, 6, 1, -20)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.Text = "กำลังโหลด..."
-StatusLabel.TextColor3 = THEME.Accent
+StatusLabel.TextColor3 = Color3.fromRGB(0, 255, 153)
 StatusLabel.Font = Enum.Font.SourceSans
 StatusLabel.TextSize = 12
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -424,11 +303,12 @@ UIList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 local currentLayoutOrder = 0
-local function createWidgetFrame(height, labelText, labelSize, labelPos, labelTextSize)
+
+local function createToggle(text, initialState, callback)
         currentLayoutOrder += 1
         local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, height)
-        frame.BackgroundColor3 = THEME.BG
+        frame.Size = UDim2.new(1, 0, 0, 32)
+        frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
         frame.LayoutOrder = currentLayoutOrder
         frame.Parent = ScrollFrame
 
@@ -437,25 +317,20 @@ local function createWidgetFrame(height, labelText, labelSize, labelPos, labelTe
         corner.Parent = frame
 
         local label = Instance.new("TextLabel")
-        label.Size = labelSize
-        label.Position = labelPos
+        label.Size = UDim2.new(0.7, -10, 1, 0)
+        label.Position = UDim2.new(0.04, 0, 0, 0)
         label.BackgroundTransparency = 1
-        label.Text = labelText
-        label.TextColor3 = THEME.Text
+        label.Text = text
+        label.TextColor3 = Color3.fromRGB(220, 220, 220)
         label.Font = Enum.Font.SourceSans
-        label.TextSize = labelTextSize
+        label.TextSize = 12
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.Parent = frame
 
-        return frame, label
-end
-
-local function createToggle(text, initialState, callback)
-        local frame = createWidgetFrame(32, text, UDim2.new(0.7, -10, 1, 0), UDim2.new(0.04, 0, 0, 0), 12)
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(0, 48, 0, 20)
         btn.Position = UDim2.new(1, -54, 0.5, -10)
-        btn.BackgroundColor3 = initialState and THEME.ToggleOn or THEME.ToggleOff
+        btn.BackgroundColor3 = initialState and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
         btn.Text = initialState and "ON" or "OFF"
         btn.TextColor3 = Color3.fromRGB(255, 255, 255)
         btn.Font = Enum.Font.SourceSansBold
@@ -470,17 +345,38 @@ local function createToggle(text, initialState, callback)
         btn.MouseButton1Click:Connect(function()
                 isToggled = not isToggled
                 btn.Text = isToggled and "ON" or "OFF"
-                btn.BackgroundColor3 = isToggled and THEME.ToggleOn or THEME.ToggleOff
+                btn.BackgroundColor3 = isToggled and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
                 callback(isToggled)
         end)
 end
 
 local function createModeSelector(text, modesArray, initialIndex, callback)
-        local frame = createWidgetFrame(32, text, UDim2.new(0.5, -10, 1, 0), UDim2.new(0.04, 0, 0, 0), 12)
+        currentLayoutOrder += 1
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 0, 32)
+        frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+        frame.LayoutOrder = currentLayoutOrder
+        frame.Parent = ScrollFrame
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = frame
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.5, -10, 1, 0)
+        label.Position = UDim2.new(0.04, 0, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = Color3.fromRGB(220, 220, 220)
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 12
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = frame
+
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(0, 80, 0, 20)
         btn.Position = UDim2.new(1, -86, 0.5, -10)
-        btn.BackgroundColor3 = THEME.AccentDim
+        btn.BackgroundColor3 = Color3.fromRGB(0, 115, 95)
         btn.Text = modesArray[initialIndex]
         btn.TextColor3 = Color3.fromRGB(255, 255, 255)
         btn.Font = Enum.Font.SourceSansBold
@@ -501,13 +397,34 @@ local function createModeSelector(text, modesArray, initialIndex, callback)
 end
 
 local function createSlider(text, min, max, default, step, callback)
-        local frame = createWidgetFrame(48, text, UDim2.new(0.6, 0, 0, 20), UDim2.new(0.04, 0, 0, 3), 11)
+        currentLayoutOrder += 1
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 0, 48)
+        frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+        frame.LayoutOrder = currentLayoutOrder
+        frame.Parent = ScrollFrame
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = frame
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.6, 0, 0, 20)
+        label.Position = UDim2.new(0.04, 0, 0, 3)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = Color3.fromRGB(220, 220, 220)
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 11
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = frame
+
         local valLabel = Instance.new("TextLabel")
         valLabel.Size = UDim2.new(0.3, 0, 0, 20)
         valLabel.Position = UDim2.new(0.65, 0, 0, 3)
         valLabel.BackgroundTransparency = 1
         valLabel.Text = tostring(default)
-        valLabel.TextColor3 = THEME.TextDim
+        valLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
         valLabel.Font = Enum.Font.SourceSansBold
         valLabel.TextSize = 11
         valLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -516,7 +433,7 @@ local function createSlider(text, min, max, default, step, callback)
         local sliderBar = Instance.new("TextButton")
         sliderBar.Size = UDim2.new(0.92, 0, 0, 6)
         sliderBar.Position = UDim2.new(0.04, 0, 0, 30)
-        sliderBar.BackgroundColor3 = THEME.Track
+        sliderBar.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
         sliderBar.Text = ""
         sliderBar.AutoButtonColor = false
         sliderBar.Parent = frame
@@ -528,7 +445,7 @@ local function createSlider(text, min, max, default, step, callback)
         local sliderFill = Instance.new("Frame")
         local initialRatio = math.clamp((default - min) / (max - min), 0, 1)
         sliderFill.Size = UDim2.new(initialRatio, 0, 1, 0)
-        sliderFill.BackgroundColor3 = THEME.Accent
+        sliderFill.BackgroundColor3 = Color3.fromRGB(0, 255, 153)
         sliderFill.BorderSizePixel = 0
         sliderFill.Parent = sliderBar
 
@@ -541,6 +458,7 @@ local function createSlider(text, min, max, default, step, callback)
                 if input.UserInputType == Enum.UserInputType.MouseButton1
                         or input.UserInputType == Enum.UserInputType.Touch then
                         dragging = true
+
                         local function update(inp)
                                 local ratio = math.clamp(
                                         (inp.Position.X - sliderBar.AbsolutePosition.X)
@@ -552,6 +470,7 @@ local function createSlider(text, min, max, default, step, callback)
                                 valLabel.Text = (step >= 1) and tostring(math.floor(stepped + 0.5)) or tostring(stepped)
                                 callback(stepped)
                         end
+
                         update(input)
                         local moveConn, relConn
                         moveConn = UserInputService.InputChanged:Connect(function(moveInp)
@@ -577,20 +496,20 @@ createModeSelector("Target Part", { "Head", "Torso", "Random" }, 1, function(v) 
 createToggle("Show FOV Circle", State.ShowFOV, function(v) State.ShowFOV = v end)
 createToggle("Team Check", State.TeamCheck, function(v) State.TeamCheck = v end)
 createToggle("Wall Check", State.WallCheck, function(v) State.WallCheck = v end)
+
 createToggle("Prediction Engine", State.Prediction, function(v) State.Prediction = v end)
 createToggle("Ping Compensation", State.PingCompensation, function(v) State.PingCompensation = v end)
+
 createToggle("Drop Value Mode: Multiplier", State.DropIsMultiplier, function(v)
         State.DropIsMultiplier = v
         WeaponService:UpdateAuto()
 end)
-createToggle("Auto Ballistics (วัดกระสุนจริง)", State.AutoBallistics, function(v)
-        State.AutoBallistics = v
-        WeaponService:UpdateAuto()
-end)
+
 createToggle("Auto Weapon Speed", State.AutoBulletSpeed, function(v)
         State.AutoBulletSpeed = v
         WeaponService:UpdateAuto()
 end)
+
 createToggle("ESP Wallhack", State.ESP, function(v) State.ESP = v end)
 createToggle("ESP Username", State.ESPName, function(v) State.ESPName = v end)
 
@@ -604,209 +523,40 @@ createSlider("Manual Gravity", 0, 500, State.BulletGravity, 10, function(v)
 end)
 createSlider("Aim Speed", 0.05, 1, State.Smoothness, 0.05, function(v) State.Smoothness = v end)
 createSlider("Aimbot FOV Range", 50, 500, State.FOV, 10, function(v) State.FOV = v end)
-createSlider("Pred Reactivity", 0.2, 3, State.PredReactivity, 0.05, function(v) State.PredReactivity = v end)
-createSlider("Pred Max Slew (s/s)", 0.5, 10, State.PredMaxSlew, 0.5, function(v) State.PredMaxSlew = v end)
-createSlider("Drop Comp (%)", 0, 150, State.DropComp, 5, function(v) State.DropComp = v end)
-createSlider("Prediction Strength", 0, 2, State.PredStrength, 0.05, function(v) State.PredStrength = v end)
+
+createSlider("Pred Reactivity", 0.2, 3, State.PredReactivity, 0.05, function(v)
+        State.PredReactivity = v
+end)
+createSlider("Pred Max Slew (s/s)", 0.5, 10, State.PredMaxSlew, 0.5, function(v)
+        State.PredMaxSlew = v
+end)
+
 createToggle("Lag Comp", State.LagComp, function(v) State.LagComp = v end)
-createSlider("Catch-Up Boost", 0, 3, State.TrackBoost, 0.05, function(v) State.TrackBoost = v end)
+createSlider("Catch-Up Boost", 0, 3, State.TrackBoost, 0.05, function(v)
+        State.TrackBoost = v
+end)
+
 createToggle("Drag To Switch", State.DragSwitch, function(v) State.DragSwitch = v end)
 createToggle("Free Steer", State.FreeSteer, function(v) State.FreeSteer = v end)
 createToggle("Switch Assist", State.SwitchAssist, function(v) State.SwitchAssist = v end)
-createSlider("Flick Speed (°/s)", 60, 300, State.FlickSpeed, 5, function(v) State.FlickSpeed = v end)
-createToggle("Weapon Check", State.WeaponCheck, function(v) State.WeaponCheck = v end)
+createSlider("Flick Speed (°/s)", 60, 300, State.FlickSpeed, 5, function(v)
+        State.FlickSpeed = v
+end)
+createToggle("Weapon Check", State.WeaponCheck, function(v)
+        State.WeaponCheck = v
+end)
 
-setGlxStatus("UIพร้อม — กำลังโหลดระบบเกม...")
+setGlxStatus("UI พร้อม — กำลังโหลดระบบเกม...")
 -- ==========================================
 -- 4. WEAPON SERVICE (Cached Weapon Stats)
 -- ==========================================
 WeaponService = {
         Speed = FALLBACK_SPEED,
-        Gravity = workspace.Gravity,
-        Measured = false
+        Gravity = workspace.Gravity
 }
-
--- ==========================================
--- 4.5 BULLET WATCHER — AUTO BALLISTICS REAL-TIME (v5.0)
--- ==========================================
-local MeasuredBallistics = {}
-local MEAS_STORE_MAX = 12
-local MEAS_SPEED_MIN, MEAS_SPEED_MAX = 60, 6000
-local MEAS_GRAV_MAX = 400
-local MEAS_FLAT_G = 4
-local MAX_TRACKS = 3
-local activeTracks = {}
-local lastTrackStart = 0
-
-local function median(list)
-        local copy = {}
-        for i = 1, #list do copy[i] = list[i] end
-        table.sort(copy)
-        local n = #copy
-        if n == 0 then return nil end
-        if n % 2 == 1 then return copy[(n + 1) / 2] end
-        return (copy[n / 2] + copy[n / 2 + 1]) / 2
-end
-
-local function det3(a, b, c, d, e, f, g, h, i)
-        return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
-end
-local function solve3(c1, c2, c3, b)
-        local det = det3(c1[1], c2[1], c3[1], c1[2], c2[2], c3[2], c1[3], c2[3], c3[3])
-        if math.abs(det) < 1e-12 then return nil end
-        local x1 = det3(b[1], c2[1], c3[1], b[2], c2[2], c3[2], b[3], c2[3], c3[3]) / det
-        local x2 = det3(c1[1], b[1], c3[1], c1[2], b[2], c3[2], c1[3], b[3], c3[3]) / det
-        local x3 = det3(c1[1], c2[1], b[1], c1[2], c2[2], b[2], c1[3], c2[3], b[3]) / det
-        return x1, x2, x3
-end
-
-local function fitBallistics(samples)
-        local n = #samples
-        if n < 3 then return nil end
-        local S1, S2, S3, S4 = 0, 0, 0, 0
-        local T0, T1, T2 = 0, 0, 0
-        local X0, X1, Z0, Z1 = 0, 0, 0, 0
-        for i = 1, n do
-                local t, p = samples[i].t, samples[i].pos
-                local t2 = t * t
-                S1 += t
-                S2 += t2
-                S3 += t2 * t
-                S4 += t2 * t2
-                T0 += p.Y
-                T1 += t * p.Y
-                T2 += t2 * p.Y
-                X0 += p.X
-                X1 += t * p.X
-                Z0 += p.Z
-                Z1 += t * p.Z
-        end
-        local denomLin = n * S2 - S1 * S1
-        if math.abs(denomLin) < 1e-9 then return nil end
-        local vx = (n * X1 - S1 * X0) / denomLin
-        local vz = (n * Z1 - S1 * Z0) / denomLin
-        local _, vy, A = solve3({ n, S1, S2 }, { S1, S2, S3 }, { S2, S3, S4 }, { T0, T1, T2 })
-        if not vy or not A then return nil end
-        local g = -2 * A
-        local speed = math.sqrt(vx * vx + vz * vz + vy * vy)
-        if speed < MEAS_SPEED_MIN or speed > MEAS_SPEED_MAX then return nil end
-        if g < -20 or g > MEAS_GRAV_MAX then return nil end
-        if math.abs(g) < MEAS_FLAT_G then g = 0 end
-        return { Speed = speed, Gravity = g }
-end
-
-local function isBulletCandidate(inst, camPos)
-        if not inst:IsA("BasePart") then return false end
-        if inst.Transparency >= 1 then return false end
-        local okSize, size = pcall(function() return inst.Size end)
-        if not okSize or size.Magnitude > 6 then return false end
-        local okPos, pos = pcall(function() return inst.Position end)
-        if not okPos or not pos then return false end
-        if (pos - camPos).Magnitude > 15 then return false end
-        local parent = inst.Parent
-        if parent and parent:FindFirstChildOfClass("Humanoid") then return false end
-        return true
-end
-
-local function finalizeTrack(track)
-        local samples = track.samples
-        if #samples < 3 then return end
-        if (samples[#samples].pos - samples[1].pos).Magnitude < 12 then return end
-        local fit = fitBallistics(samples)
-        if not fit then return end
-        local store = MeasuredBallistics[track.weaponName]
-        if not store then
-                store = { Speeds = {}, Gravities = {}, Count = 0, UpdatedAt = 0 }
-                MeasuredBallistics[track.weaponName] = store
-        end
-        store.Speeds[#store.Speeds + 1] = fit.Speed
-        store.Gravities[#store.Gravities + 1] = fit.Gravity
-        if #store.Speeds > MEAS_STORE_MAX then
-                table.remove(store.Speeds, 1)
-                table.remove(store.Gravities, 1)
-        end
-        store.Count += 1
-        store.UpdatedAt = os.clock()
-end
-
-local function updateBulletTracks()
-        local now = os.clock()
-        for i = #activeTracks, 1, -1 do
-                local track = activeTracks[i]
-                local part = track.part
-                local alive = part and part.Parent
-                if alive then
-                        local okPos, pos = pcall(function() return part.Position end)
-                        if okPos and pos then
-                                local lastS = track.samples[#track.samples]
-                                if (pos - lastS.pos).Magnitude > 200 then
-                                        alive = false
-                                else
-                                        track.samples[#track.samples + 1] = { t = now, pos = pos }
-                                end
-                        else
-                                alive = false
-                        end
-                end
-                if not alive or now - track.startedAt > 0.6 or #track.samples >= 40 then
-                        table.remove(activeTracks, i)
-                        finalizeTrack(track)
-                end
-        end
-end
-
-local lastMeasureStatusClock = 0
-function WeaponService:RefreshMeasured()
-        if not State.AutoBallistics then self.Measured = false return end
-        local char = LocalPlayer and LocalPlayer.Character
-        local tool = char and char:FindFirstChildOfClass("Tool")
-        if not (tool and tool.Parent) then self.Measured = false return end
-        local store = MeasuredBallistics[tool.Name]
-        if store and store.Count > 0 then
-                self.Speed = median(store.Speeds)
-                self.Gravity = median(store.Gravities)
-                self.Measured = true
-                local now = os.clock()
-                if self.AnnouncedCount ~= store.Count and now - lastMeasureStatusClock > 3 then
-                        self.AnnouncedCount = store.Count
-                        lastMeasureStatusClock = now
-                        setStickyStatus(("AUTO BALL [%s]: %d หน่วย/วิ · g %.0f — วัดจากกระสุนจริง %d นัด")
-                                :format(tool.Name, math.floor(self.Speed), self.Gravity, store.Count))
-                end
-        else
-                self.Measured = false
-        end
-end
-
-do
-        CleanupManager:AddConn("BulletWatcherAdded", Workspace.DescendantAdded:Connect(function(inst)
-                if not State.AutoBallistics then return end
-                local now = os.clock()
-                if now - lastTrackStart < 0.05 then return end
-                if #activeTracks >= MAX_TRACKS then return end
-                local camera = getCamera()
-                if not camera then return end
-                local camPos = camera.CFrame.Position
-                if not isBulletCandidate(inst, camPos) then return end
-                lastTrackStart = now
-                local char = LocalPlayer and LocalPlayer.Character
-                local tool = char and char:FindFirstChildOfClass("Tool")
-                activeTracks[#activeTracks + 1] = {
-                        part = inst,
-                        weaponName = tool and tool.Name or "Unknown",
-                        samples = { { t = now, pos = inst.Position } },
-                        startedAt = now
-                }
-        end))
-        CleanupManager:AddConn("BulletWatcherTick", RunService.Heartbeat:Connect(function()
-                if not State.AutoBallistics or #activeTracks == 0 then return end
-                updateBulletTracks()
-        end))
-end
 
 function WeaponService:UpdateManual()
         if not State.AutoBulletSpeed then
-                self.Measured = false
                 self.Speed = math.max(State.BulletSpeed or FALLBACK_SPEED, 1)
                 self.Gravity = State.BulletGravity or workspace.Gravity
         end
@@ -815,7 +565,6 @@ end
 local WeaponCache = setmetatable({}, { __mode = "k" })
 
 function WeaponService:UpdateAuto()
-        self.Measured = false
         if not State.AutoBulletSpeed then return self:UpdateManual() end
 
         local char = LocalPlayer and LocalPlayer.Character
@@ -831,7 +580,6 @@ function WeaponService:UpdateAuto()
         if cached then
                 self.Speed = cached.Speed
                 self.Gravity = cached.Gravity
-                if State.AutoBallistics then self:RefreshMeasured() end
                 return
         end
 
@@ -861,7 +609,6 @@ function WeaponService:UpdateAuto()
         WeaponCache[tool] = { Speed = speed, Gravity = gravity }
         self.Speed = speed
         self.Gravity = gravity
-        if State.AutoBallistics then self:RefreshMeasured() end
 end
 
 local HookedTools = setmetatable({}, { __mode = "k" })
@@ -946,15 +693,16 @@ function VisibilityService:CheckVisibility(targetCharacter, pierceCount, specifi
                 ScratchFilter[n] = myChar
         end
 
-        RayParams.FilterDescendantsInstances = ScratchFilter
         for i = 1, maxPierces do
+                RayParams.FilterDescendantsInstances = ScratchFilter
                 local okRay, result = pcall(Workspace.Raycast, Workspace, currentOrigin, currentDirection, RayParams)
+
                 if not okRay or not result then return true end
 
                 local hitPart = result.Instance
                 if hitPart:IsDescendantOf(targetCharacter) then return true end
 
-                if i < maxPierces and (hitPart.Transparency > PIERCE_TRANSPARENCY or not hitPart.CanCollide) then
+                if i < maxPierces and (hitPart.Transparency > 0.8 or not hitPart.CanCollide) then
                         n += 1
                         ScratchFilter[n] = hitPart
                         local seg = targetPos - result.Position
@@ -967,86 +715,6 @@ function VisibilityService:CheckVisibility(targetCharacter, pierceCount, specifi
                 end
         end
         return false
-end
-
-function VisibilityService:CheckPointVisible(targetCharacter, worldPoint)
-        local camera = getCamera()
-        if not (camera and targetCharacter and isFiniteVec3(worldPoint)) then return false end
-        local origin = camera.CFrame.Position
-        local direction = worldPoint - origin
-        if direction.Magnitude < 0.05 then return true end
-
-        table.clear(ScratchFilter)
-        local n = 0
-        local myChar = LocalPlayer and LocalPlayer.Character
-        if myChar then
-                n += 1
-                ScratchFilter[n] = myChar
-        end
-        RayParams.FilterDescendantsInstances = ScratchFilter
-        local currentOrigin, currentDirection = origin, direction
-        for _ = 1, 3 do
-                local okRay, result = pcall(Workspace.Raycast, Workspace, currentOrigin, currentDirection, RayParams)
-                if not okRay or not result then return true end
-                if result.Instance:IsDescendantOf(targetCharacter) then return true end
-                local hitPart = result.Instance
-                if hitPart.Transparency > PIERCE_TRANSPARENCY or not hitPart.CanCollide then
-                        n += 1
-                        ScratchFilter[n] = hitPart
-                        local seg = worldPoint - result.Position
-                        local segUnit = safeUnit(seg)
-                        if not segUnit then return true end
-                        currentOrigin = result.Position + segUnit * 0.05
-                        currentDirection = seg
-                else
-                        return false
-                end
-        end
-        return false
-end
-
-local VIS_PART_ORDER = { "Head", "UpperTorso", "Torso", "LowerTorso", "HumanoidRootPart" }
-function VisibilityService:FindVisiblePart(targetCharacter, primaryPart, deep)
-        if not (targetCharacter and targetCharacter.Parent) then return false, nil end
-
-        if deep then
-                local head = targetCharacter:FindFirstChild("Head")
-                if head and head:IsA("BasePart") then
-                        if self:CheckVisibility(targetCharacter, 1, head) then return true, head end
-                        local half = head.Size * 0.5
-                        local cf = head.CFrame
-                        local probes = {
-                                cf.Position + cf.UpVector * (half.Y * VIS_HEAD_PROBE),
-                                cf.Position + cf.RightVector * (half.X * VIS_HEAD_PROBE),
-                                cf.Position - cf.RightVector * (half.X * VIS_HEAD_PROBE)
-                        }
-                        for i = 1, #probes do
-                                if self:CheckPointVisible(targetCharacter, probes[i]) then return true, head end
-                        end
-                end
-        end
-
-        if primaryPart and primaryPart.Parent and primaryPart:IsDescendantOf(targetCharacter)
-                and primaryPart:IsA("BasePart") then
-                if self:CheckVisibility(targetCharacter, 1, primaryPart) then return true, primaryPart end
-        end
-
-        if not deep then
-                local head = targetCharacter:FindFirstChild("Head")
-                if head and head ~= primaryPart and head:IsA("BasePart") then
-                        if self:CheckVisibility(targetCharacter, 1, head) then return true, head end
-                end
-        end
-
-        if deep then
-                for i = 2, #VIS_PART_ORDER do
-                        local p = targetCharacter:FindFirstChild(VIS_PART_ORDER[i])
-                        if p and p ~= primaryPart and p:IsA("BasePart") then
-                                if self:CheckVisibility(targetCharacter, 1, p) then return true, p end
-                        end
-                end
-        end
-        return false, nil
 end
 
 -- ==========================================
@@ -1083,12 +751,6 @@ local function getComponents(player)
         if not entry.Root then
                 entry.Root = char:FindFirstChild("HumanoidRootPart")
         end
-        if entry.Head and entry.Head.Parent ~= char then
-                entry.Head = nil
-        end
-        if not entry.Head then
-                entry.Head = char:FindFirstChild("Head")
-        end
         return entry
 end
 
@@ -1112,22 +774,18 @@ CleanupManager:AddConn("PlayerRemovingCaches", Players.PlayerRemoving:Connect(fu
         PlayerCache[player] = nil
 end))
 
-local TARGET_GRACE = 0.35
+local TARGET_GRACE = 0.25
 local KEEP_HYSTERESIS = 1.35
 local ZOOM_TAU = 0.08
-local lastMeasureRefresh = 0
 local targetGraceUntil = 0
 local zoomSmoothed = nil
-local aimPosSmoothed, aimPosSmoothedPart, aimPosSmoothedClock = nil, nil, 0
 
 local SWITCH_COOLDOWN = 0.30
-local FLICK_SWITCH_COOLDOWN = 0.45
-local switchAwayPlayer = nil
+local switchAwayKey = nil
 local switchCooldownUntil = 0
-local SWITCH_RATIO = 0.60
+local SWITCH_RATIO = 0.50
 local SWITCH_CHECK_INTERVAL = 0.05
 local lastSwitchCheck = 0
-
 -- ==========================================
 -- 6. TARGET SERVICE (State Machine)
 -- ==========================================
@@ -1137,19 +795,12 @@ local TargetService = {
         LockedPartName = nil
 }
 
-local function banTargetAndRelease(player, cooldownSec)
-        switchAwayPlayer = player
-        switchCooldownUntil = os.clock() + cooldownSec
-        TargetService:ReleaseTarget()
-end
-
 local RANDOM_PARTS = { "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart" }
 
-function TargetService:GetTargetPart(player, char)
-        local comp = getComponents(player)
-        local root = comp and comp.Root
+function TargetService:GetTargetPart(char)
+        local root = char:FindFirstChild("HumanoidRootPart")
         if State.TargetPartMode == "Head" then
-                return (comp and comp.Head) or root
+                return char:FindFirstChild("Head") or root
         end
         if State.TargetPartMode == "Random" then
                 if self.LockedPartName then
@@ -1170,19 +821,6 @@ function TargetService:ReleaseTarget()
         targetGraceUntil = 0
 end
 
-local lastLockAnnounceClock = 0
-local function announceLockPart(part, player)
-        if not part then return end
-        if part == TargetService.LastAnnouncedPart and player == TargetService.LastAnnouncedTarget then return end
-        local now = os.clock()
-        TargetService.LastAnnouncedPart = part
-        TargetService.LastAnnouncedTarget = player
-        if now - lastLockAnnounceClock < 1 then return end
-        lastLockAnnounceClock = now
-        setStickyStatus("ล็อค " .. (player and player.Name or "?") .. " → " .. part.Name
-                .. (part.Name == "Head" and " (หัว)" or " (ตัว — หัวถูกบัง/โหมดอื่น)"))
-end
-
 function TargetService:KeepTarget(camera, screenCenter, scaledFOV)
         local target = self.CurrentTarget
         if not isValidEnemy(target) then return false end
@@ -1192,66 +830,52 @@ function TargetService:KeepTarget(camera, screenCenter, scaledFOV)
                 return false
         end
 
-        if State.WallCheck then
-                local visOK, visPart = VisibilityService:FindVisiblePart(target.Character, part, true)
-                if not visOK then return false end
-                if visPart and visPart ~= part and visPart.Parent then
-                        part = visPart
-                        self.TargetPart = part
-                        announceLockPart(part, target)
-                end
+        if State.WallCheck and not VisibilityService:CheckVisibility(target.Character, 1, part) then
+                return false
         end
 
-        local distSq = screenDistSq(camera, part.Position, screenCenter)
-        if not distSq then return false end
+        local screenPoint, onScreen = camera:WorldToViewportPoint(part.Position)
+        if not onScreen or screenPoint.Z <= 0 then return false end
 
-        local keepRadius = scaledFOV * KEEP_HYSTERESIS
-        return distSq <= keepRadius * keepRadius
+        local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - screenCenter).Magnitude
+        return dist <= scaledFOV * KEEP_HYSTERESIS
 end
 
-local function findBestCandidate(self, camera, screenCenter, scaledFOV, limit, excludePlayer, now)
-        now = now or os.clock()
-        local cooldownActive = switchCooldownUntil > now and switchAwayPlayer ~= nil
+function TargetService:AcquireTarget(camera, screenCenter, scaledFOV)
+        local closestDist = scaledFOV
+        local closestPlayer, bestPart = nil, nil
+        local now = os.clock()
+        local cooldownActive = switchCooldownUntil > now and switchAwayKey ~= nil
 
-        local bestDistSq = limit * limit
-        local bestPlayer, bestPart = nil, nil
         local players = Players:GetPlayers()
         for i = 1, #players do
                 local player = players[i]
-                if player ~= excludePlayer and isValidEnemy(player) then
-                        local part = self:GetTargetPart(player, player.Character)
+                if isValidEnemy(player) then
+                        local part = self:GetTargetPart(player.Character)
                         if part then
-                                local distSq = screenDistSq(camera, part.Position, screenCenter)
-                                if distSq then
-                                        local banned = cooldownActive and player == switchAwayPlayer
-                                        local banRadius = scaledFOV * BAN_OVERRIDE_RATIO
-                                        if distSq < bestDistSq and (not banned or distSq <= banRadius * banRadius) then
-                                                local visOK, visPart = true, part
-                                                if State.WallCheck then
-                                                        visOK, visPart = VisibilityService:FindVisiblePart(player.Character, part, false)
-                                                end
-                                                if visOK then
-                                                        bestDistSq = distSq
-                                                        bestPlayer = player
-                                                        bestPart = visPart or part
+                                local screenPoint, onScreen = camera:WorldToViewportPoint(part.Position)
+                                if onScreen and screenPoint.Z > 0 then
+                                        local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - screenCenter).Magnitude
+                                        local banned = cooldownActive and player == switchAwayKey
+                                        if dist < closestDist and (not banned or dist <= scaledFOV * 0.12) then
+                                                if not State.WallCheck
+                                                        or VisibilityService:CheckVisibility(player.Character, 1, part) then
+                                                        closestDist = dist
+                                                        closestPlayer = player
+                                                        bestPart = part
                                                 end
                                         end
                                 end
                         end
                 end
         end
-        return bestPlayer, bestPart
-end
 
-function TargetService:AcquireTarget(camera, screenCenter, scaledFOV, now)
-        local bestPlayer, bestPart = findBestCandidate(self, camera, screenCenter, scaledFOV, scaledFOV, nil, now)
-        if bestPlayer then
-                if bestPlayer ~= self.CurrentTarget then
+        if closestPlayer then
+                if closestPlayer ~= self.CurrentTarget then
                         self.LockedPartName = nil
                 end
-                self.CurrentTarget = bestPlayer
+                self.CurrentTarget = closestPlayer
                 self.TargetPart = bestPart
-                announceLockPart(bestPart, bestPlayer)
         end
 end
 
@@ -1264,20 +888,48 @@ function TargetService:CheckSwitch(camera, screenCenter, scaledFOV)
         local part = self.TargetPart
         if not (target and part and part.Parent) then return end
 
-        local myDistSq = screenDistSq(camera, part.Position, screenCenter)
-        if not myDistSq then return end
+        local myPoint, myOn = camera:WorldToViewportPoint(part.Position)
+        if not (myOn and myPoint.Z > 0) then return end
+        local myDist = (Vector2.new(myPoint.X, myPoint.Y) - screenCenter).Magnitude
 
-        local limit = math.min(math.sqrt(myDistSq) * SWITCH_RATIO, scaledFOV)
+        local limit = math.min(myDist * SWITCH_RATIO, scaledFOV)
         if limit <= 0 then return end
 
-        local bestPlayer, bestPart = findBestCandidate(self, camera, screenCenter, scaledFOV, limit, target, now)
-        if bestPlayer then
-                banTargetAndRelease(target, SWITCH_COOLDOWN)
+        local cooldownActive = switchCooldownUntil > now and switchAwayKey ~= nil
+        local bestDist = limit
+        local bestPlayer, bestPart = nil, nil
+
+        local players = Players:GetPlayers()
+        for i = 1, #players do
+                local player = players[i]
+                if player ~= target and isValidEnemy(player) then
+                        local cand = self:GetTargetPart(player.Character)
+                        if cand then
+                                local sp, onScreen = camera:WorldToViewportPoint(cand.Position)
+                                if onScreen and sp.Z > 0 then
+                                        local dist = (Vector2.new(sp.X, sp.Y) - screenCenter).Magnitude
+                                        local banned = cooldownActive and player == switchAwayKey
+                                        if dist < bestDist and (not banned or dist <= scaledFOV * 0.12) then
+                                                bestDist = dist
+                                                bestPlayer = player
+                                                bestPart = cand
+                                        end
+                                end
+                        end
+                end
+        end
+
+        if bestPlayer and (not State.WallCheck
+                or VisibilityService:CheckVisibility(bestPlayer.Character, 1, bestPart)) then
+                switchAwayKey = target
+                switchCooldownUntil = now + SWITCH_COOLDOWN
                 self.CurrentTarget = bestPlayer
                 self.TargetPart = bestPart
-                announceLockPart(bestPart, bestPlayer)
+                self.LockedPartName = nil
+                targetGraceUntil = 0
         end
 end
+
 -- ==========================================
 -- 7. ADVANCED PREDICTION ENGINE
 -- ==========================================
@@ -1300,7 +952,7 @@ local function clampAccelLead(v3, cap)
 end
 
 task.spawn(function()
-        while G.Glx_Running and task.wait(10) do
+        while getgenv().Glx_Running and task.wait(10) do
                 for part in pairs(TargetStates) do
                         if typeof(part) ~= "Instance" or not part:IsDescendantOf(workspace) then
                                 TargetStates[part] = nil
@@ -1407,7 +1059,7 @@ local function getTargetAcceleration(kinPart, targetVel, currentTime)
         return state.smoothedAcceleration, state.smoothedVelocity
 end
 
-local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletGravityVec, deltaTime, leadTime, zoomScale, autoMode)
+local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletGravityVec, deltaTime, leadTime, zoomScale)
         if typeof(bulletSpeed) ~= "number" or bulletSpeed <= 0 then return nil end
         if typeof(shooterPos) ~= "Vector3" then return nil end
         if typeof(bulletGravityVec) ~= "Vector3" then return nil end
@@ -1419,33 +1071,20 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
 
         local kinPart = getKinematicPart(targetPart)
         local targetAcc, targetVel = getTargetAcceleration(kinPart, kinPart.AssemblyLinearVelocity, currentTime)
-        local initialDist = (targetPos - shooterPos).Magnitude
-        local isAuto = autoMode == true
-        local pingOffset = (State.PingCompensation and (getPing() * 0.5) or 0)
-                + (isAuto and math.min(leadTime or 0, initialDist / bulletSpeed) or (leadTime or 0))
+        local pingOffset = (State.PingCompensation and (getPing() * 0.5) or 0) + (leadTime or 0)
 
         local accelLeadCap = MAX_ACCEL_LEAD / (zoomScale or getZoomScale(getCamera()))
-        local dropComp = isAuto and 1 or math.clamp(State.DropComp or 0, 0, 200) * 0.01
-
-        local strength = isAuto and 1 or math.clamp(State.PredStrength or 1, 0, 2)
-        local LEAD_CAP = 60
-        local function leadAt(totalT)
-                local lead = ((targetVel * totalT)
-                        + clampAccelLead(0.5 * targetAcc * (totalT ^ 2), accelLeadCap)) * strength
-                local mag = lead.Magnitude
-                if mag > LEAD_CAP then lead = lead * (LEAD_CAP / mag) end
-                return lead
-        end
 
         local function f(t)
                 local totalT = t + pingOffset
-                local targetAtT = targetPos + leadAt(totalT)
-                local bulletDropAtT = 0.5 * bulletGravityVec * (t ^ 2) * dropComp
+                local targetAtT = targetPos + (targetVel * totalT) + clampAccelLead(0.5 * targetAcc * (totalT ^ 2), accelLeadCap)
+                local bulletDropAtT = 0.5 * bulletGravityVec * (t ^ 2)
                 local requiredDisplacement = targetAtT - shooterPos - bulletDropAtT
                 return (bulletSpeed * t) - requiredDisplacement.Magnitude
         end
 
         local t0 = 0
+        local initialDist = (targetPos - shooterPos).Magnitude
         local t1 = (initialDist / bulletSpeed) + pingOffset
 
         if t1 <= 0 then return safeUnit(targetPos - shooterPos) end
@@ -1481,11 +1120,11 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
         end
 
         local finalT = t_intercept + pingOffset
-        local finalTargetPos = targetPos + leadAt(finalT)
+        local finalTargetPos = targetPos + (targetVel * finalT) + clampAccelLead(0.5 * targetAcc * (finalT ^ 2), accelLeadCap)
         local displacement = finalTargetPos - shooterPos
 
         if t_intercept > 0 then
-                local requiredVelocity = (displacement / t_intercept) - (0.5 * bulletGravityVec * t_intercept * dropComp)
+                local requiredVelocity = (displacement / t_intercept) - (0.5 * bulletGravityVec * t_intercept)
                 local finalUnit = safeUnit(requiredVelocity)
                 if finalUnit then return finalUnit end
         end
@@ -1516,9 +1155,8 @@ local function getPredictedPosition(targetPart, shooterPos, deltaTime, leadTime,
         end
 
         local bulletSpeed = math.max(WeaponService.Speed, 1)
-        local autoMode = State.AutoBallistics and WeaponService.Measured == true or false
-        local aimDirection = solveInterceptVector(shooterPos, targetPart, bulletSpeed, lastGravVec, deltaTime, leadTime, zoomScale, autoMode)
-        if aimDirection then return shooterPos + (aimDirection * AIM_PROJECTION_DIST) end
+        local aimDirection = solveInterceptValue and solveInterceptVector(shooterPos, targetPart, bulletSpeed, lastGravVec, deltaTime, leadTime, zoomScale) or nil
+        if aimDirection then return shooterPos + (aimDirection * 10000) end
 
         return targetPos
 end
@@ -1535,26 +1173,16 @@ local ESPService = {
 
 local ESPRegistry = setmetatable({}, { __mode = "k" })
 
-local function destroyHighlight(entry)
+local function destroyEntryVisuals(entry)
+        if not entry then return end
         if entry.Highlight then
                 pcall(entry.Highlight.Destroy, entry.Highlight)
                 entry.Highlight = nil
-                entry.ShownVisible = nil
         end
-end
-
-local function destroyNameTag(entry)
         if entry.NameTag then
                 pcall(entry.NameTag.Destroy, entry.NameTag)
                 entry.NameTag = nil
-                entry.TagLabel = nil
         end
-end
-
-local function destroyEntryVisuals(entry)
-        if not entry then return end
-        destroyHighlight(entry)
-        destroyNameTag(entry)
         entry.ShownVisible = nil
 end
 
@@ -1605,19 +1233,10 @@ end
 function ESPService:ProcessESP()
         local now = os.clock()
         local players = Players:GetPlayers()
-        local espActive = State.ESP or State.ESPName
-        local visBudget = math.max(1, math.ceil(#players / ESP_VIS_BUDGET_DIV))
 
         for i = 1, #players do
                 local player = players[i]
                 if player ~= LocalPlayer then
-                        if not espActive then
-                                local staleEntry = self.Cache[player]
-                                if staleEntry and (staleEntry.Highlight or staleEntry.NameTag) then
-                                        destroyEntryVisuals(staleEntry)
-                                end
-                                continue
-                        end
                         local char = player.Character
 
                         if not char then
@@ -1633,8 +1252,6 @@ function ESPService:ProcessESP()
                                                 LastCheck = 0,
                                                 Highlight = char:FindFirstChild("ESP_Highlight"),
                                                 NameTag = char:FindFirstChild("ESP_NameTag"),
-                                                Head = nil,
-                                                TagLabel = nil,
                                                 ShownVisible = nil
                                         }
                                         self.Cache[player] = entry
@@ -1642,14 +1259,13 @@ function ESPService:ProcessESP()
 
                                 local isEnemy = isValidEnemy(player)
 
-                                if not isEnemy or not espActive then
-                                        destroyEntryVisuals(entry)
+                                if not isEnemy or (not State.ESP and not State.ESPName) then
+                                        if entry.Highlight then entry.Highlight:Destroy(); entry.Highlight = nil end
+                                        if entry.NameTag then entry.NameTag:Destroy(); entry.NameTag = nil end
+                                        entry.ShownVisible = nil
                                 else
-                                        if visBudget > 0 and now - entry.LastCheck >= ESP_VIS_INTERVAL then
-                                                visBudget -= 1
-                                                local headPart = entry.Head
-                                                if headPart and headPart.Parent ~= char then headPart = nil end
-                                                entry.Visible = VisibilityService:CheckVisibility(char, 5, headPart)
+                                        if now - entry.LastCheck >= 0.35 then
+                                                entry.Visible = VisibilityService:CheckVisibility(char, 5, nil)
                                                 entry.LastCheck = now
                                         end
 
@@ -1670,16 +1286,14 @@ function ESPService:ProcessESP()
                                                         hl.OutlineColor = entry.Visible and self.OUTLINE_VISIBLE or self.OUTLINE_OBSTRUCTED
                                                         entry.ShownVisible = entry.Visible
                                                 end
-                                        else
-                                                destroyHighlight(entry)
+                                        elseif entry.Highlight then
+                                                entry.Highlight:Destroy()
+                                                entry.Highlight = nil
+                                                entry.ShownVisible = nil
                                         end
 
                                         if State.ESPName then
-                                                local head = entry.Head
-                                                if not (head and head.Parent == char) then
-                                                        head = char:FindFirstChild("Head")
-                                                        entry.Head = head
-                                                end
+                                                local head = char:FindFirstChild("Head")
                                                 if head then
                                                         local nt = entry.NameTag
                                                         if not nt or nt.Parent ~= char then
@@ -1687,19 +1301,17 @@ function ESPService:ProcessESP()
                                                                 nt = entry.NameTag
                                                         end
                                                         local color = entry.Visible and self.COLOR_VISIBLE or self.COLOR_OBSTRUCTED
-                                                        local label = entry.TagLabel
-                                                        if not (label and label.Parent == nt) then
-                                                                label = nt:FindFirstChild("TagLabel")
-                                                                entry.TagLabel = label
-                                                        end
+                                                        local label = nt:FindFirstChild("TagLabel")
                                                         if label and label.TextColor3 ~= color then
                                                                 label.TextColor3 = color
                                                         end
-                                                else
-                                                        destroyNameTag(entry)
+                                                elseif entry.NameTag then
+                                                        entry.NameTag:Destroy()
+                                                        entry.NameTag = nil
                                                 end
-                                        else
-                                                destroyNameTag(entry)
+                                        elseif entry.NameTag then
+                                                entry.NameTag:Destroy()
+                                                entry.NameTag = nil
                                         end
                                 end
                         end
@@ -1710,42 +1322,37 @@ end
 local espAccumulator = 0
 local ESP_INTERVAL = 1 / 30
 local lastEspTick = os.clock()
+local espErrStreak = 0
 local espProcessFn = function() ESPService:ProcessESP() end
 local traceFn = (type(debug) == "table" and type(debug.traceback) == "function")
         and debug.traceback or function(e) return tostring(e) end
 
-local function connectGuardedLoop(connName, reportLabel, signal, fn, reportAt)
-        local errStreak = 0
-        CleanupManager:AddConn(connName, signal:Connect(function(...)
-                local ok, err = xpcall(fn, traceFn, ...)
-                if ok then
-                        errStreak = 0
-                else
-                        errStreak += 1
-                        if errStreak == reportAt then
-                                log("ERROR", reportLabel .. " error: " .. tostring(err))
-                                if setStickyStatus then
-                                        setStickyStatus(reportLabel:lower() .. " error: " .. tostring(err):sub(1, 40))
+local function connectESP()
+        CleanupManager:AddConn("ESP_Heartbeat", RunService.Heartbeat:Connect(function(dt)
+                lastEspTick = os.clock()
+                if not State.ESP and not State.ESPName then return end
+                espAccumulator += dt
+                if espAccumulator >= ESP_INTERVAL then
+                        espAccumulator = 0
+                        local ok, err = xpcall(espProcessFn, traceFn)
+                        if ok then
+                                espErrStreak = 0
+                        else
+                                espErrStreak += 1
+                                if espErrStreak == 5 then
+                                        warn("[GLX v3.7] ESP tick error: " .. tostring(err))
+                                        if setStickyStatus then
+                                                setStickyStatus("ESP error: " .. tostring(err):sub(1, 40))
+                                        end
                                 end
                         end
                 end
         end))
 end
-
-local function connectESP()
-        connectGuardedLoop("ESP_Heartbeat", "ESP tick", RunService.Heartbeat, function(dt)
-                lastEspTick = os.clock()
-                espAccumulator += dt
-                if espAccumulator >= ESP_INTERVAL then
-                        espAccumulator = 0
-                        espProcessFn()
-                end
-        end, 5)
-end
 connectESP()
 
 task.spawn(function()
-        while G.Glx_Cleanup == CleanupManager and task.wait(5) do
+        while getgenv().Glx_Cleanup == CleanupManager and task.wait(5) do
                 local owned
                 for _, entry in pairs(ESPService.Cache) do
                         if entry.Highlight or entry.NameTag then
@@ -1774,19 +1381,10 @@ task.spawn(function()
         end
 end)
 
--- ==========================================
--- 9. MAIN CAMERA ENGINE
--- ==========================================
-local function tryNewDrawing(kind)
-        local ok, obj = pcall(function() return Drawing.new(kind) end)
-        if ok and obj then return obj end
-        return nil
-end
-
 local FOVCircle
 do
-        local drawObj = tryNewDrawing("Circle")
-        if drawObj then
+        local okDraw, drawObj = pcall(function() return Drawing.new("Circle") end)
+        if okDraw and drawObj then
                 FOVCircle = drawObj
         else
                 FOVCircle = {
@@ -1804,62 +1402,47 @@ FOVCircle.Filled = false
 FOVCircle.Transparency = 0.7
 FOVCircle.Visible = false
 CleanupManager:AddDrawing("FOVCircle", FOVCircle)
-
-local WEAPON_CHECK_TTL = 0.15
-local weaponCache = { character = nil, result = false, expires = 0 }
 local function hasActiveWeapon()
         local character = LocalPlayer and LocalPlayer.Character
         if not character then return false end
         if State.WeaponCheck == false then return true end
-        local nowClock = os.clock()
-        if weaponCache.character == character and nowClock < weaponCache.expires then
-                return weaponCache.result
-        end
-        local result = character:FindFirstChildOfClass("Tool") ~= nil
-        weaponCache.character = character
-        weaponCache.result = result
-        weaponCache.expires = nowClock + WEAPON_CHECK_TTL
-        return result
+        return character:FindFirstChildOfClass("Tool") ~= nil
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + self-heal watchdog (ไม่มี hook เกม — ไม่มีการสังเคราะห์ input ใด ๆ [Trigger Bot ถูกลบออกทั้งระบบตามคำขอตั้งแต่ v4.8] [v5.0: Auto Ballistics วัดกระสุนจริงแบบ real time])")
+print("[GLX v3.7] โหลดสำเร็จ — aimbot + ESP + self-heal watchdog (ไม่มี hook / ไม่มี input สังเคราะห์)")
 
 local flickUntil = 0
 local flickArmStart = nil
-local FLICK_ARM = 0.045
+local FLICK_ARM = 0.06
 local prevReadLook = nil
 local lastWriteLook = nil
-local FLICK_HOLD = 0.14
+local FLICK_HOLD = 0.10
 local STEER_DPS = 30
-local STEER_HOLD = 0.18
+local STEER_HOLD = 0.22
 local STEER_MIN_INFLUENCE = 0.15
 local STEER_TAU = 0.07
 
 local steerInfluence = 1
 local steerHoldStart = nil
 local prevErrDeg = nil
-local prevDesiredDir = nil
-local desSmoothed = 0
-local lastAimWriteClock = 0
 
 local lastRenderTick = os.clock()
+local renderErrStreak = 0
 local function renderTick(deltaTime)
         local camera = getCamera()
         if not camera then return end
-
-        local now = os.clock()
-        local vp = camera.ViewportSize
-        local screenCenter = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
 
         local userLook = camera.CFrame.LookVector
         local dtSafe = math.max(deltaTime, 1e-4)
         local userDps = math.huge
         if prevReadLook then
-                local uDeg = angleBetweenDeg(userLook, prevReadLook)
+                local uDot = math.clamp(userLook:Dot(prevReadLook), -1, 1)
+                local uDeg = math.deg(math.acos(uDot))
                 if uDeg > 0.05 then userDps = uDeg / dtSafe end
         end
         if lastWriteLook then
-                local wDeg = angleBetweenDeg(userLook, lastWriteLook)
+                local wDot = math.clamp(userLook:Dot(lastWriteLook), -1, 1)
+                local wDeg = math.deg(math.acos(wDot))
                 local againstPull = false
                 if prevReadLook then
                         local pullAxis = prevReadLook:Cross(lastWriteLook)
@@ -1871,39 +1454,18 @@ local function renderTick(deltaTime)
                 end
         end
         if userDps == math.huge then userDps = 0 end
-        local handAxisRaw = nil
-        if lastWriteLook then
-                handAxisRaw = lastWriteLook:Cross(userLook)
-        elseif prevReadLook then
-                handAxisRaw = prevReadLook:Cross(userLook)
-        end
         prevReadLook = userLook
         lastWriteLook = nil
 
-        local handAway = true
-        local gatePart = TargetService.TargetPart
-        if gatePart and gatePart.Parent then
-                local toTarget = safeUnit(gatePart.Position - camera.CFrame.Position)
-                local aimAxis = toTarget and safeUnit(userLook:Cross(toTarget))
-                local handAxis = handAxisRaw and safeUnit(handAxisRaw)
-                if aimAxis and handAxis then
-                        handAway = handAxis:Dot(aimAxis) < 0
-                end
-        end
-        if State.DragSwitch and handAway and userDps > (State.FlickSpeed or 140) then
-                if not flickArmStart then flickArmStart = now end
-                if now - flickArmStart >= FLICK_ARM then
-                        flickUntil = now + FLICK_HOLD
+        if State.DragSwitch and userDps > (State.FlickSpeed or 140) then
+                if not flickArmStart then flickArmStart = os.clock() end
+                if os.clock() - flickArmStart >= FLICK_ARM then
+                        flickUntil = os.clock() + FLICK_HOLD
                 end
         else
                 flickArmStart = nil
         end
 
-        local nowRefresh = os.clock()
-        if State.AutoBallistics and nowRefresh - lastMeasureRefresh > 0.25 then
-                lastMeasureRefresh = nowRefresh
-                WeaponService:RefreshMeasured()
-        end
         local zoomRaw = getZoomScale(camera)
         if not zoomSmoothed then
                 zoomSmoothed = zoomRaw
@@ -1911,7 +1473,9 @@ local function renderTick(deltaTime)
                 zoomSmoothed += (zoomRaw - zoomSmoothed) * (1 - math.exp(-deltaTime / ZOOM_TAU))
         end
 
-        local scaledFOV = State.FOV * (vp.Y / 1080) * math.clamp(zoomSmoothed, 1, 5)
+        local vp = camera.ViewportSize
+        local screenCenter = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
+        local scaledFOV = State.FOV * (vp.Y / 1080)
 
         if State.ShowFOV then
                 FOVCircle.Position = screenCenter
@@ -1929,9 +1493,11 @@ local function renderTick(deltaTime)
                 return
         end
 
-        if State.DragSwitch and now < flickUntil then
+        if State.DragSwitch and os.clock() < flickUntil then
                 if TargetService.CurrentTarget then
-                        banTargetAndRelease(TargetService.CurrentTarget, FLICK_SWITCH_COOLDOWN)
+                        switchAwayKey = TargetService.CurrentTarget
+                        switchCooldownUntil = os.clock() + SWITCH_COOLDOWN
+                        TargetService:ReleaseTarget()
                 end
                 steerInfluence = 1
                 steerHoldStart = nil
@@ -1939,8 +1505,8 @@ local function renderTick(deltaTime)
                 return
         end
 
-        if switchAwayPlayer and now >= switchCooldownUntil then
-                switchAwayPlayer = nil
+        if switchAwayKey and os.clock() >= switchCooldownUntil then
+                switchAwayKey = nil
         end
 
         if TargetService.CurrentTarget then
@@ -1950,88 +1516,57 @@ local function renderTick(deltaTime)
                         targetGraceUntil = 0
                 else
                         if targetGraceUntil == 0 then
-                                targetGraceUntil = now + TARGET_GRACE
+                                targetGraceUntil = os.clock() + TARGET_GRACE
                         end
                         local part = TargetService.TargetPart
-                        local onScreen = part and screenDistSq(camera, part.Position, screenCenter) ~= nil
-                        if not onScreen or now >= targetGraceUntil then
+                        local onScreen = false
+                        if part then
+                                local sp, isOn = camera:WorldToViewportPoint(part.Position)
+                                onScreen = isOn and sp.Z > 0
+                        end
+                        if not onScreen or os.clock() >= targetGraceUntil then
                                 TargetService:ReleaseTarget()
                         end
                 end
         end
 
         if not TargetService.CurrentTarget then
-                TargetService:AcquireTarget(camera, screenCenter, scaledFOV, now)
+                TargetService:AcquireTarget(camera, screenCenter, scaledFOV)
         end
 
         if State.SwitchAssist and TargetService.CurrentTarget then
                 TargetService:CheckSwitch(camera, screenCenter, scaledFOV)
         end
-                local targetPart = TargetService.TargetPart
+
+        local targetPart = TargetService.TargetPart
         if TargetService.CurrentTarget and targetPart and targetPart.Parent then
                 local shooterPos = camera.CFrame.Position
-
                 local zoomScale = zoomSmoothed
-                local zoomSettle = math.min(zoomScale, 5)
                 local baseRate = (10 + State.Smoothness * 30) * zoomScale
-                local settleSpeed = SETTLE_SPEED_BASE + State.Smoothness * SETTLE_SPEED_SPAN
-
-                local posTau = AIM_POS_TAU_BASE + (zoomSettle - 1) * AIM_POS_TAU_ZOOM
-                local leadTau = State.LagComp and math.min(1 / settleSpeed + posTau, 0.15) or 0
+                local leadTau = State.LagComp and math.min(1 / baseRate, 0.15) or 0
                 local targetPos = getPredictedPosition(targetPart, shooterPos, deltaTime, leadTau, zoomScale)
-
-                if aimPosSmoothedPart ~= targetPart or aimPosSmoothed == nil
-                        or now - aimPosSmoothedClock > 0.1 then
-                        aimPosSmoothedPart = targetPart
-                        aimPosSmoothed = targetPos
-                end
-                aimPosSmoothedClock = now
-                aimPosSmoothed = aimPosSmoothed:Lerp(targetPos, 1 - math.exp(-deltaTime / posTau))
-                targetPos = aimPosSmoothed
 
                 local desiredDirection = safeUnit(targetPos - shooterPos)
                 if desiredDirection then
-                        local errDeg = angleBetweenDeg(camera.CFrame.LookVector, desiredDirection)
+                        local dot = math.clamp(camera.CFrame.LookVector:Dot(desiredDirection), -1, 1)
+                        local errDeg = math.deg(math.acos(dot))
                         local errScaled = errDeg * zoomScale
                         local gain = State.TrackBoost or 1.5
-                        if now - lastAimWriteClock > 0.1 then
-                                prevDesiredDir = nil
-                                desSmoothed = 0
-                        end
-                        local desAngDps = 0
-                        if prevDesiredDir and prevDesiredDir:Dot(desiredDirection) < 0.9999995 then
-                                desAngDps = angleBetweenDeg(prevDesiredDir, desiredDirection) / dtSafe
-                        end
-                        prevDesiredDir = desiredDirection
-                        desSmoothed += (desAngDps - desSmoothed) * (1 - math.exp(-dtSafe / DES_ANG_TAU))
-                        desSmoothed = math.min(desSmoothed, DES_ANG_MAX_DPS)
-                        local trackCap = math.max(MAX_TRACK_DPS, desSmoothed * TRACK_MARGIN)
-                        local effSpeed = math.min(baseRate + errScaled * gain, trackCap)
+                        local effSpeed = math.min(baseRate + errScaled * gain, 70)
                         local sdt = math.min(deltaTime, 1 / 30)
                         local alpha = 1 - math.exp(-effSpeed * sdt)
-                        local microDeg = AIM_MICRO_SMOOTH_DEG * zoomSettle
-                        if errDeg < microDeg then
-                                alpha *= settleAlphaFactor(errDeg, microDeg, zoomSettle)
-                        end
-                        local maxStepDps = (MAX_STEP_BASE + State.Smoothness * MAX_STEP_SPAN) * zoomScale
+                        local maxStepDps = (120 + State.Smoothness * 240) * zoomScale
                         alpha = math.min(alpha, (maxStepDps * sdt) / math.max(errDeg, 0.05))
 
-                        local handAssisting = false
-                        if handAxisRaw then
-                                local aimAxis = safeUnit(userLook:Cross(desiredDirection))
-                                local handAxis = safeUnit(handAxisRaw)
-                                if aimAxis and handAxis and handAxis:Dot(aimAxis) > 0 then
-                                        handAssisting = true
-                                end
-                        end
                         local steering = State.FreeSteer and userDps > STEER_DPS
                                 and prevErrDeg ~= nil and errDeg > prevErrDeg + 0.05
-                                and not handAssisting
                         if steering then
-                                if not steerHoldStart then steerHoldStart = now end
-                                if State.DragSwitch and now - steerHoldStart >= STEER_HOLD then
-                                        banTargetAndRelease(TargetService.CurrentTarget, FLICK_SWITCH_COOLDOWN)
-                                        flickUntil = now + FLICK_HOLD
+                                if not steerHoldStart then steerHoldStart = os.clock() end
+                                if State.DragSwitch and os.clock() - steerHoldStart >= STEER_HOLD then
+                                        switchAwayKey = TargetService.CurrentTarget
+                                        switchCooldownUntil = os.clock() + SWITCH_COOLDOWN
+                                        TargetService:ReleaseTarget()
+                                        flickUntil = os.clock() + FLICK_HOLD
                                         return
                                 end
                         else
@@ -2039,11 +1574,6 @@ local function renderTick(deltaTime)
                         end
                         local infTarget = steering and STEER_MIN_INFLUENCE or 1
                         steerInfluence += (infTarget - steerInfluence) * (1 - math.exp(-deltaTime / STEER_TAU))
-
-                        if errDeg <= AIM_HOLD_DEG and desSmoothed < DES_ANG_HOLD_MAX and steerInfluence > 0.5 then
-                                prevErrDeg = errDeg
-                                return
-                        end
 
                         alpha = math.clamp(alpha, 0, 1)
                         steerInfluence = math.clamp(steerInfluence, 0, 1)
@@ -2053,34 +1583,39 @@ local function renderTick(deltaTime)
                                 if ok and newCFrame then
                                         camera.CFrame = newCFrame
                                         lastWriteLook = smoothDirection
-                                        lastAimWriteClock = now
                                 end
                         end
                         prevErrDeg = errDeg
                 end
         end
-
 end
 
 local function connectRenderLoop()
-        connectGuardedLoop("RenderStep", "aim loop", RunService.RenderStepped, function(deltaTime)
+        CleanupManager:AddConn("RenderStep", RunService.RenderStepped:Connect(function(deltaTime)
                 lastRenderTick = os.clock()
-                renderTick(deltaTime)
-        end, 10)
+                local ok, err = xpcall(renderTick, traceFn, deltaTime)
+                if ok then
+                        renderErrStreak = 0
+                else
+                        renderErrStreak += 1
+                        if renderErrStreak == 10 then
+                                warn("[GLX v3.7] aim loop error: " .. tostring(err))
+                                if setStickyStatus then
+                                        setStickyStatus("aim error: " .. tostring(err):sub(1, 40))
+                                end
+                        end
+                end
+        end))
 end
-bootPhase("ต่อลูป render/ESP")
 connectRenderLoop()
 
--- ==========================================
--- 10. LOAD REPORT (v3.8 — สรุปสถานะการโหลด + watchdog + FPS meter)
--- ==========================================
 setGlxStatus("โหลดครบทุกระบบ — พร้อมใช้")
 
 local stickyMsg, stickyUntil = nil, 0
 setStickyStatus = function(msg)
         stickyMsg = tostring(msg)
         stickyUntil = os.clock() + 6
-        log("WARN", stickyMsg)
+        warn("[GLX v3.7] " .. stickyMsg)
         if StatusLabel then StatusLabel.Text = stickyMsg end
 end
 
@@ -2091,12 +1626,12 @@ do
                 if watchdogAccum < 1 then return end
                 watchdogAccum = 0
                 local now = os.clock()
-                if State.Aimbot and now - lastRenderTick > WATCHDOG_TIMEOUT then
+                if State.Aimbot and now - lastRenderTick > 2 then
                         lastRenderTick = now
                         connectRenderLoop()
                         setStickyStatus("watchdog: ฟื้น aim loop กลับมาแล้ว")
                 end
-                if (State.ESP or State.ESPName) and now - lastEspTick > WATCHDOG_TIMEOUT then
+                if (State.ESP or State.ESPName) and now - lastEspTick > 2 then
                         lastEspTick = now
                         connectESP()
                         setStickyStatus("watchdog: ฟื้น ESP loop กลับมาแล้ว")
@@ -2119,88 +1654,3 @@ do
                 end
         end))
 end
-
--- ==========================================
--- 11. SELF-TEST (v3.8 — ทดสอบ pure functions ตาม edge case)
--- ==========================================
-if G.Glx_SelfTest then
-        local passed, failed = 0, 0
-        local function expect(name, cond)
-                if cond then
-                        passed += 1
-                else
-                        failed += 1
-                        log("ERROR", "self-test FAIL: " .. name)
-                end
-        end
-
-        expect("NaN vector ถูกปฏิเสธ", isFiniteVec3(Vector3.new(0 / 0, 1, 1)) == false)
-        expect("Inf vector ถูกปฏิเสธ", isFiniteVec3(Vector3.new(math.huge, 0, 0)) == false)
-        expect("vector ปกติผ่าน", isFiniteVec3(Vector3.new(1, -2, 3)) == true)
-
-        expect("unit ของเวกเตอร์ยาว 0 = nil", safeUnit(Vector3.zero) == nil)
-        expect("unit คงทิศเดิม", safeUnit(Vector3.new(3, 0, 0)):Dot(Vector3.xAxis) > 0.99)
-
-        expect("zoom scale FOV 70 = 1", getZoomScale({ FieldOfView = 70 }) == 1)
-        expect("zoom scale ถูกเพดานที่ 8", getZoomScale({ FieldOfView = 0.1 }) == 8)
-
-        local fakeTarget = {
-                Position = Vector3.new(100, 0, 0),
-                IsA = function(_, _) return true end
-        }
-        local dir = solveInterceptVector(
-                Vector3.zero, fakeTarget, 5000, Vector3.new(0, -196.2, 0), 1 / 60, 0, 1)
-        expect("ยิงตรงเป้านิ่ง = ทิศเกือบ +X", dir ~= nil and math.abs(dir.X - 1) < 0.01)
-
-        expect("bulletSpeed <= 0 = nil",
-                solveInterceptVector(Vector3.zero, fakeTarget, 0, Vector3.new(0, -196.2, 0), 1 / 60, 0, 1) == nil)
-
-        State.PredStrength = 0
-        State.DropComp = 0
-        local dirDirect = solveInterceptVector(
-                Vector3.zero, fakeTarget, 5000, Vector3.new(0, -196.2, 0), 1 / 60, 0, 1)
-        expect("strength 0 + drop 0 = เล็งจุดจริงเป๊ะ (+X)",
-                dirDirect ~= nil and math.abs(dirDirect.X - 1) < 1e-9 and dirDirect.Y == 0 and dirDirect.Z == 0)
-        State.PredStrength = 1
-        State.DropComp = 0
-
-        local mockCam = { WorldToViewportPoint = function(_, p)
-                return Vector3.new(p.X + 3, p.Y + 4, 5), true
-        end }
-        expect("ระยะ²บนจอ 3-4 = 25", screenDistSq(mockCam, Vector3.new(0, 0, 0), Vector2.new(0, 0)) == 25)
-        local mockOffCam = { WorldToViewportPoint = function() return Vector3.new(9, 9, 9), false end }
-        expect("จุดนอกจอ = nil", screenDistSq(mockOffCam, Vector3.new(0, 0, 0), Vector2.new(0, 0)) == nil)
-
-        expect("มุมทิศเดียวกัน = 0°", angleBetweenDeg(Vector3.xAxis, Vector3.xAxis) < 1e-9)
-        expect("มุมตั้งฉาก = 90°", math.abs(angleBetweenDeg(Vector3.xAxis, Vector3.yAxis) - 90) < 1e-9)
-
-        expect("settle ขอบโซน = 1 (ไม่กระตุก)", settleAlphaFactor(1.6, 1.6, 4) == 1)
-        expect("settle นอกโซน = 1", settleAlphaFactor(2.0, 1.6, 4) == 1)
-        expect("settle ลึกซูม 4x = นุ่มกว่า hip", settleAlphaFactor(0.02, 1.6, 4) < 0.2)
-        expect("settle ไม่ซูม = พฤติกรรม v3.9 เดิม (0.3+0.7r)",
-                math.abs(settleAlphaFactor(0.2, 0.4, 1) - 0.65) < 1e-9)
-
-        expect("median คี่", median({ 3, 1, 2 }) == 2)
-        expect("median คู่", median({ 4, 1, 3, 2 }) == 2.5)
-        local flatTrack = {
-                { t = 0.0, pos = Vector3.new(0, 0, 0) }, { t = 0.1, pos = Vector3.new(10, 0, 0) },
-                { t = 0.2, pos = Vector3.new(20, 0, 0) }, { t = 0.3, pos = Vector3.new(30, 0, 0) }
-        }
-        local fitFlat = fitBallistics(flatTrack)
-        expect("fit วิถีตรง: speed 100 g 0",
-                fitFlat ~= nil and math.abs(fitFlat.Speed - 100) < 1 and fitFlat.Gravity == 0)
-        local dropTrack = {
-                { t = 0.0, pos = Vector3.new(0, 0, 0) }, { t = 0.1, pos = Vector3.new(10, -0.4905, 0) },
-                { t = 0.2, pos = Vector3.new(20, -1.962, 0) }, { t = 0.3, pos = Vector3.new(30, -4.4145, 0) }
-        }
-        local fitDrop = fitBallistics(dropTrack)
-        expect("fit วิถีตก: g ~98.1", fitDrop ~= nil and math.abs(fitDrop.Gravity - 98.1) < 0.5)
-        expect("fit จุดน้อย/ชิ้นนิ่ง = ปฏิเสธ",
-                fitBallistics({ { t = 0, pos = Vector3.zero }, { t = 0.1, pos = Vector3.new(5, 0, 0) } }) == nil)
-
-        log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
-end
-
-bootPhase("done")
-log("INFO", "boot complete — โค้ดถึงบรรทัดสุดท้ายครบ (ถ้าปุ่ม Glx ยังไม่ขึ้น = executor แสดง ScreenGui ไม่ได้ ลองรีเข้าเกมแล้วรันใหม่ หรือปิดสคริปต์อื่นเช่น IY/Dex ที่อาจชนกัน)")
--- [GLX v5.0 EOF]
