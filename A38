@@ -1,6 +1,6 @@
--- Luau | glx_aimbot_v4_8.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v4_9.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.8)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.9)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -19,7 +19,7 @@ do
 end
 
 local bootToken = {}
-G.GLX_BOOT = { phase = "start", token = bootToken, version = "v4.8" }
+G.GLX_BOOT = { phase = "start", token = bootToken, version = "v4.9" }
 local function bootPhase(p)
         if G.GLX_BOOT then G.GLX_BOOT.phase = p end
 end
@@ -28,7 +28,7 @@ task.delay(8, function()
         if not (boot and boot.token == bootToken) then return end
         if boot.phase == "done" then return end
         local stuckAt = boot.phase
-        warn("[GLX v4.7] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt)
+        warn("[GLX v4.9] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt)
         pcall(function()
                 if Drawing == nil then return end
                 local beacon = Drawing.new("Text")
@@ -49,7 +49,7 @@ task.delay(8, function()
         end)
 end)
 
-local LOG_PREFIX = "[GLX v4.8]"
+local LOG_PREFIX = "[GLX v4.9]"
 local function log(level, msg)
         local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
         if level == "INFO" then
@@ -140,7 +140,7 @@ local State = {
         Prediction = true,
         PredReactivity = 1.5,
         PredMaxSlew = 3.0,
-        DropComp = 100,
+        DropComp = 0,
         PredStrength = 1.0,
         TrackBoost = 1.5,
         LagComp = true,
@@ -148,7 +148,7 @@ local State = {
         FlickSpeed = 75,
         FreeSteer = true,
         SwitchAssist = true,
-        WeaponCheck = false,
+        WeaponCheck = true,
         TargetPartMode = "Head",
         PingCompensation = true,
         DropIsMultiplier = true,
@@ -156,7 +156,7 @@ local State = {
         BulletSpeed = 5000,
         BulletGravity = workspace.Gravity,
         Smoothness = 1,
-        FOV = 100,
+        FOV = 150,
         ShowFOV = false,
         ESP = true,
         ESPName = true,
@@ -1604,7 +1604,7 @@ local function hasActiveWeapon()
         return result
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + self-heal watchdog ([v4.8: Trigger Bot ถูกลบออกแล้ว])")
+log("INFO", "โหลดสำเร็จ — aimbot + ESP + self-heal watchdog (ไม่มีการสังเคราะห์ input ใด ๆ)")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1744,7 +1744,6 @@ local function renderTick(deltaTime)
         if State.SwitchAssist and TargetService.CurrentTarget then
                 TargetService:CheckSwitch(camera, screenCenter, scaledFOV)
         end
-
                 local targetPart = TargetService.TargetPart
         if TargetService.CurrentTarget and targetPart and targetPart.Parent then
                 local shooterPos = camera.CFrame.Position
@@ -1928,7 +1927,7 @@ if G.Glx_SelfTest then
         expect("strength 0 + drop 0 = เล็งจุดจริงเป๊ะ (+X)",
                 dirDirect ~= nil and math.abs(dirDirect.X - 1) < 1e-9 and dirDirect.Y == 0 and dirDirect.Z == 0)
         State.PredStrength = 1
-        State.DropComp = 100
+        State.DropComp = 0
 
         local mockCam = { WorldToViewportPoint = function(_, p)
                 return Vector3.new(p.X + 3, p.Y + 4, 5), true
@@ -1943,7 +1942,7 @@ if G.Glx_SelfTest then
         expect("settle ขอบโซน = 1", settleAlphaFactor(1.6, 1.6, 4) == 1)
         expect("settle นอกโซน = 1", settleAlphaFactor(2.0, 1.6, 4) == 1)
         expect("settle ลึกซูม 4x = นุ่มกว่า hip", settleAlphaFactor(0.02, 1.6, 4) < 0.2)
-        expect("settle ไม่ซูม = พฤติกรรม v3.9 เดิม",
+        expect("settle ไม่ซูม = พฤติกรรมเดิม",
                 math.abs(settleAlphaFactor(0.2, 0.4, 1) - 0.65) < 1e-9)
 
         log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
@@ -1951,5 +1950,4 @@ end
 
 bootPhase("done")
 log("INFO", "boot complete — โค้ดถึงบรรทัดสุดท้ายครบ")
--- [GLX v4.8 EOF]
-
+-- [GLX v4.9 EOF]
