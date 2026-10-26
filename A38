@@ -1,6 +1,6 @@
--- Luau | glx_aimbot_v4_9.lua | Roblox executor (Synapse-style env)
+-- Luau | glx_aimbot_v5_0.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v4.9)
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v5.0 — AUTO BALLISTICS วัดกระสุนจริง REAL-TIME + ลบ TRIGGER BOT)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -19,7 +19,7 @@ do
 end
 
 local bootToken = {}
-G.GLX_BOOT = { phase = "start", token = bootToken, version = "v4.9" }
+G.GLX_BOOT = { phase = "start", token = bootToken, version = "v5.0" }
 local function bootPhase(p)
         if G.GLX_BOOT then G.GLX_BOOT.phase = p end
 end
@@ -28,7 +28,7 @@ task.delay(8, function()
         if not (boot and boot.token == bootToken) then return end
         if boot.phase == "done" then return end
         local stuckAt = boot.phase
-        warn("[GLX v4.9] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt)
+        warn("[GLX v5.0] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt)
         pcall(function()
                 if Drawing == nil then return end
                 local beacon = Drawing.new("Text")
@@ -49,7 +49,7 @@ task.delay(8, function()
         end)
 end)
 
-local LOG_PREFIX = "[GLX v4.9]"
+local LOG_PREFIX = "[GLX v5.0]"
 local function log(level, msg)
         local line = LOG_PREFIX .. " [" .. level .. "] " .. tostring(msg)
         if level == "INFO" then
@@ -68,7 +68,7 @@ if not LocalPlayer then
 end
 if not LocalPlayer then
         bootPhase("ไม่พบ LocalPlayer — ยกเลิกโหลด")
-        log("ERROR", "ไม่พบ LocalPlayer — รอผู้เล่นโหลดไม่สำเร็จ")
+        log("ERROR", "ไม่พบ LocalPlayer — รอผู้เล่นโหลดไม่สำเร็จ รันสคริปต์ใหม่อีกครั้งหลังเข้าเกม")
         return
 end
 bootPhase("LocalPlayer พร้อม")
@@ -76,7 +76,7 @@ bootPhase("LocalPlayer พร้อม")
 local FALLBACK_SPEED = 3000
 
 -- ==========================================
--- 1. CLEANUP MANAGER
+-- 1. CLEANUP MANAGER (Complete Lifecycle)
 -- ==========================================
 local CleanupManager = {
         Connections = {},
@@ -148,15 +148,16 @@ local State = {
         FlickSpeed = 75,
         FreeSteer = true,
         SwitchAssist = true,
-        WeaponCheck = true,
+        WeaponCheck = false,
         TargetPartMode = "Head",
         PingCompensation = true,
         DropIsMultiplier = true,
         AutoBulletSpeed = true,
+        AutoBallistics = true,
         BulletSpeed = 5000,
         BulletGravity = workspace.Gravity,
         Smoothness = 1,
-        FOV = 150,
+        FOV = 100,
         ShowFOV = false,
         ESP = true,
         ESPName = true,
@@ -293,7 +294,7 @@ ScreenGui.Name = "Glx_UI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.DisplayOrder = 999999
 if not parentGuiAnywhere(ScreenGui) then
-        log("ERROR", "ใส่ UI ลงเกมไม่ได้")
+        log("ERROR", "ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด) — UI จะไม่แสดง")
 end
 CleanupManager:AddInstance("MainUI", ScreenGui)
 bootPhase("โครง UI พร้อม")
@@ -334,24 +335,31 @@ local mainStroke = Instance.new("UIStroke")
 mainStroke.Color = THEME.Stroke
 mainStroke.Parent = MainFrame
 
+local dragConnIndex = 0
 local function enableDrag(handle, target)
         local dragging = false
         local dragStart, startPos
-        handle.InputBegan:Connect(function(input)
+
+        dragConnIndex += 1
+        CleanupManager:AddConn("DragBegan" .. dragConnIndex, handle.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1
                         or input.UserInputType == Enum.UserInputType.Touch then
                         dragging = true
                         dragStart = input.Position
                         startPos = target.Position
                 end
-        end)
-        handle.InputEnded:Connect(function(input)
+        end))
+
+        dragConnIndex += 1
+        CleanupManager:AddConn("DragEnded" .. dragConnIndex, handle.InputEnded:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1
                         or input.UserInputType == Enum.UserInputType.Touch then
                         dragging = false
                 end
-        end)
-        UserInputService.InputChanged:Connect(function(input)
+        end))
+
+        dragConnIndex += 1
+        CleanupManager:AddConn("DragMoved" .. dragConnIndex, UserInputService.InputChanged:Connect(function(input)
                 if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
                         or input.UserInputType == Enum.UserInputType.Touch) then
                         local delta = input.Position - dragStart
@@ -360,7 +368,7 @@ local function enableDrag(handle, target)
                                 startPos.Y.Scale, math.floor(startPos.Y.Offset + delta.Y + 0.5)
                         )
                 end
-        end)
+        end))
 end
 
 local TitleBar = Instance.new("TextLabel")
@@ -575,6 +583,10 @@ createToggle("Drop Value Mode: Multiplier", State.DropIsMultiplier, function(v)
         State.DropIsMultiplier = v
         WeaponService:UpdateAuto()
 end)
+createToggle("Auto Ballistics (วัดกระสุนจริง)", State.AutoBallistics, function(v)
+        State.AutoBallistics = v
+        WeaponService:UpdateAuto()
+end)
 createToggle("Auto Weapon Speed", State.AutoBulletSpeed, function(v)
         State.AutoBulletSpeed = v
         WeaponService:UpdateAuto()
@@ -604,17 +616,197 @@ createToggle("Switch Assist", State.SwitchAssist, function(v) State.SwitchAssist
 createSlider("Flick Speed (°/s)", 60, 300, State.FlickSpeed, 5, function(v) State.FlickSpeed = v end)
 createToggle("Weapon Check", State.WeaponCheck, function(v) State.WeaponCheck = v end)
 
-setGlxStatus("UI พร้อม — กำลังโหลดระบบเกม...")
+setGlxStatus("UIพร้อม — กำลังโหลดระบบเกม...")
 -- ==========================================
--- 4. WEAPON SERVICE
+-- 4. WEAPON SERVICE (Cached Weapon Stats)
 -- ==========================================
 WeaponService = {
         Speed = FALLBACK_SPEED,
-        Gravity = workspace.Gravity
+        Gravity = workspace.Gravity,
+        Measured = false
 }
+
+-- ==========================================
+-- 4.5 BULLET WATCHER — AUTO BALLISTICS REAL-TIME (v5.0)
+-- ==========================================
+local MeasuredBallistics = {}
+local MEAS_STORE_MAX = 12
+local MEAS_SPEED_MIN, MEAS_SPEED_MAX = 60, 6000
+local MEAS_GRAV_MAX = 400
+local MEAS_FLAT_G = 4
+local MAX_TRACKS = 3
+local activeTracks = {}
+local lastTrackStart = 0
+
+local function median(list)
+        local copy = {}
+        for i = 1, #list do copy[i] = list[i] end
+        table.sort(copy)
+        local n = #copy
+        if n == 0 then return nil end
+        if n % 2 == 1 then return copy[(n + 1) / 2] end
+        return (copy[n / 2] + copy[n / 2 + 1]) / 2
+end
+
+local function det3(a, b, c, d, e, f, g, h, i)
+        return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+end
+local function solve3(c1, c2, c3, b)
+        local det = det3(c1[1], c2[1], c3[1], c1[2], c2[2], c3[2], c1[3], c2[3], c3[3])
+        if math.abs(det) < 1e-12 then return nil end
+        local x1 = det3(b[1], c2[1], c3[1], b[2], c2[2], c3[2], b[3], c2[3], c3[3]) / det
+        local x2 = det3(c1[1], b[1], c3[1], c1[2], b[2], c3[2], c1[3], b[3], c3[3]) / det
+        local x3 = det3(c1[1], c2[1], b[1], c1[2], c2[2], b[2], c1[3], c2[3], b[3]) / det
+        return x1, x2, x3
+end
+
+local function fitBallistics(samples)
+        local n = #samples
+        if n < 3 then return nil end
+        local S1, S2, S3, S4 = 0, 0, 0, 0
+        local T0, T1, T2 = 0, 0, 0
+        local X0, X1, Z0, Z1 = 0, 0, 0, 0
+        for i = 1, n do
+                local t, p = samples[i].t, samples[i].pos
+                local t2 = t * t
+                S1 += t
+                S2 += t2
+                S3 += t2 * t
+                S4 += t2 * t2
+                T0 += p.Y
+                T1 += t * p.Y
+                T2 += t2 * p.Y
+                X0 += p.X
+                X1 += t * p.X
+                Z0 += p.Z
+                Z1 += t * p.Z
+        end
+        local denomLin = n * S2 - S1 * S1
+        if math.abs(denomLin) < 1e-9 then return nil end
+        local vx = (n * X1 - S1 * X0) / denomLin
+        local vz = (n * Z1 - S1 * Z0) / denomLin
+        local _, vy, A = solve3({ n, S1, S2 }, { S1, S2, S3 }, { S2, S3, S4 }, { T0, T1, T2 })
+        if not vy or not A then return nil end
+        local g = -2 * A
+        local speed = math.sqrt(vx * vx + vz * vz + vy * vy)
+        if speed < MEAS_SPEED_MIN or speed > MEAS_SPEED_MAX then return nil end
+        if g < -20 or g > MEAS_GRAV_MAX then return nil end
+        if math.abs(g) < MEAS_FLAT_G then g = 0 end
+        return { Speed = speed, Gravity = g }
+end
+
+local function isBulletCandidate(inst, camPos)
+        if not inst:IsA("BasePart") then return false end
+        if inst.Transparency >= 1 then return false end
+        local okSize, size = pcall(function() return inst.Size end)
+        if not okSize or size.Magnitude > 6 then return false end
+        local okPos, pos = pcall(function() return inst.Position end)
+        if not okPos or not pos then return false end
+        if (pos - camPos).Magnitude > 15 then return false end
+        local parent = inst.Parent
+        if parent and parent:FindFirstChildOfClass("Humanoid") then return false end
+        return true
+end
+
+local function finalizeTrack(track)
+        local samples = track.samples
+        if #samples < 3 then return end
+        if (samples[#samples].pos - samples[1].pos).Magnitude < 12 then return end
+        local fit = fitBallistics(samples)
+        if not fit then return end
+        local store = MeasuredBallistics[track.weaponName]
+        if not store then
+                store = { Speeds = {}, Gravities = {}, Count = 0, UpdatedAt = 0 }
+                MeasuredBallistics[track.weaponName] = store
+        end
+        store.Speeds[#store.Speeds + 1] = fit.Speed
+        store.Gravities[#store.Gravities + 1] = fit.Gravity
+        if #store.Speeds > MEAS_STORE_MAX then
+                table.remove(store.Speeds, 1)
+                table.remove(store.Gravities, 1)
+        end
+        store.Count += 1
+        store.UpdatedAt = os.clock()
+end
+
+local function updateBulletTracks()
+        local now = os.clock()
+        for i = #activeTracks, 1, -1 do
+                local track = activeTracks[i]
+                local part = track.part
+                local alive = part and part.Parent
+                if alive then
+                        local okPos, pos = pcall(function() return part.Position end)
+                        if okPos and pos then
+                                local lastS = track.samples[#track.samples]
+                                if (pos - lastS.pos).Magnitude > 200 then
+                                        alive = false
+                                else
+                                        track.samples[#track.samples + 1] = { t = now, pos = pos }
+                                end
+                        else
+                                alive = false
+                        end
+                end
+                if not alive or now - track.startedAt > 0.6 or #track.samples >= 40 then
+                        table.remove(activeTracks, i)
+                        finalizeTrack(track)
+                end
+        end
+end
+
+local lastMeasureStatusClock = 0
+function WeaponService:RefreshMeasured()
+        if not State.AutoBallistics then self.Measured = false return end
+        local char = LocalPlayer and LocalPlayer.Character
+        local tool = char and char:FindFirstChildOfClass("Tool")
+        if not (tool and tool.Parent) then self.Measured = false return end
+        local store = MeasuredBallistics[tool.Name]
+        if store and store.Count > 0 then
+                self.Speed = median(store.Speeds)
+                self.Gravity = median(store.Gravities)
+                self.Measured = true
+                local now = os.clock()
+                if self.AnnouncedCount ~= store.Count and now - lastMeasureStatusClock > 3 then
+                        self.AnnouncedCount = store.Count
+                        lastMeasureStatusClock = now
+                        setStickyStatus(("AUTO BALL [%s]: %d หน่วย/วิ · g %.0f — วัดจากกระสุนจริง %d นัด")
+                                :format(tool.Name, math.floor(self.Speed), self.Gravity, store.Count))
+                end
+        else
+                self.Measured = false
+        end
+end
+
+do
+        CleanupManager:AddConn("BulletWatcherAdded", Workspace.DescendantAdded:Connect(function(inst)
+                if not State.AutoBallistics then return end
+                local now = os.clock()
+                if now - lastTrackStart < 0.05 then return end
+                if #activeTracks >= MAX_TRACKS then return end
+                local camera = getCamera()
+                if not camera then return end
+                local camPos = camera.CFrame.Position
+                if not isBulletCandidate(inst, camPos) then return end
+                lastTrackStart = now
+                local char = LocalPlayer and LocalPlayer.Character
+                local tool = char and char:FindFirstChildOfClass("Tool")
+                activeTracks[#activeTracks + 1] = {
+                        part = inst,
+                        weaponName = tool and tool.Name or "Unknown",
+                        samples = { { t = now, pos = inst.Position } },
+                        startedAt = now
+                }
+        end))
+        CleanupManager:AddConn("BulletWatcherTick", RunService.Heartbeat:Connect(function()
+                if not State.AutoBallistics or #activeTracks == 0 then return end
+                updateBulletTracks()
+        end))
+end
 
 function WeaponService:UpdateManual()
         if not State.AutoBulletSpeed then
+                self.Measured = false
                 self.Speed = math.max(State.BulletSpeed or FALLBACK_SPEED, 1)
                 self.Gravity = State.BulletGravity or workspace.Gravity
         end
@@ -623,6 +815,7 @@ end
 local WeaponCache = setmetatable({}, { __mode = "k" })
 
 function WeaponService:UpdateAuto()
+        self.Measured = false
         if not State.AutoBulletSpeed then return self:UpdateManual() end
 
         local char = LocalPlayer and LocalPlayer.Character
@@ -638,6 +831,7 @@ function WeaponService:UpdateAuto()
         if cached then
                 self.Speed = cached.Speed
                 self.Gravity = cached.Gravity
+                if State.AutoBallistics then self:RefreshMeasured() end
                 return
         end
 
@@ -667,6 +861,7 @@ function WeaponService:UpdateAuto()
         WeaponCache[tool] = { Speed = speed, Gravity = gravity }
         self.Speed = speed
         self.Gravity = gravity
+        if State.AutoBallistics then self:RefreshMeasured() end
 end
 
 local HookedTools = setmetatable({}, { __mode = "k" })
@@ -713,7 +908,7 @@ if LocalPlayer then
 end
 
 -- ==========================================
--- 5. VISIBILITY SERVICE
+-- 5. VISIBILITY SERVICE (Reuse RaycastParams)
 -- ==========================================
 local VisibilityService = {}
 local RayParams = RaycastParams.new()
@@ -855,7 +1050,7 @@ function VisibilityService:FindVisiblePart(targetCharacter, primaryPart, deep)
 end
 
 -- ==========================================
--- 5.1 ENEMY VALIDITY
+-- 5.1 ENEMY VALIDITY (Component Cache)
 -- ==========================================
 local PlayerCache = setmetatable({}, { __mode = "k" })
 
@@ -920,6 +1115,7 @@ end))
 local TARGET_GRACE = 0.35
 local KEEP_HYSTERESIS = 1.35
 local ZOOM_TAU = 0.08
+local lastMeasureRefresh = 0
 local targetGraceUntil = 0
 local zoomSmoothed = nil
 local aimPosSmoothed, aimPosSmoothedPart, aimPosSmoothedClock = nil, nil, 0
@@ -933,7 +1129,7 @@ local SWITCH_CHECK_INTERVAL = 0.05
 local lastSwitchCheck = 0
 
 -- ==========================================
--- 6. TARGET SERVICE
+-- 6. TARGET SERVICE (State Machine)
 -- ==========================================
 local TargetService = {
         CurrentTarget = nil,
@@ -974,6 +1170,19 @@ function TargetService:ReleaseTarget()
         targetGraceUntil = 0
 end
 
+local lastLockAnnounceClock = 0
+local function announceLockPart(part, player)
+        if not part then return end
+        if part == TargetService.LastAnnouncedPart and player == TargetService.LastAnnouncedTarget then return end
+        local now = os.clock()
+        TargetService.LastAnnouncedPart = part
+        TargetService.LastAnnouncedTarget = player
+        if now - lastLockAnnounceClock < 1 then return end
+        lastLockAnnounceClock = now
+        setStickyStatus("ล็อค " .. (player and player.Name or "?") .. " → " .. part.Name
+                .. (part.Name == "Head" and " (หัว)" or " (ตัว — หัวถูกบัง/โหมดอื่น)"))
+end
+
 function TargetService:KeepTarget(camera, screenCenter, scaledFOV)
         local target = self.CurrentTarget
         if not isValidEnemy(target) then return false end
@@ -989,6 +1198,7 @@ function TargetService:KeepTarget(camera, screenCenter, scaledFOV)
                 if visPart and visPart ~= part and visPart.Parent then
                         part = visPart
                         self.TargetPart = part
+                        announceLockPart(part, target)
                 end
         end
 
@@ -1041,6 +1251,7 @@ function TargetService:AcquireTarget(camera, screenCenter, scaledFOV, now)
                 end
                 self.CurrentTarget = bestPlayer
                 self.TargetPart = bestPart
+                announceLockPart(bestPart, bestPlayer)
         end
 end
 
@@ -1064,6 +1275,7 @@ function TargetService:CheckSwitch(camera, screenCenter, scaledFOV)
                 banTargetAndRelease(target, SWITCH_COOLDOWN)
                 self.CurrentTarget = bestPlayer
                 self.TargetPart = bestPart
+                announceLockPart(bestPart, bestPlayer)
         end
 end
 -- ==========================================
@@ -1109,6 +1321,7 @@ end
 
 local function getTargetAcceleration(kinPart, targetVel, currentTime)
         local state = TargetStates[kinPart]
+
         local velSane = isFiniteVec3(targetVel) and targetVel.Magnitude <= VELOCITY_SANITY
         if not velSane then
                 if state then
@@ -1171,6 +1384,7 @@ local function getTargetAcceleration(kinPart, targetVel, currentTime)
         end
 
         local dv = targetVel - previousVelocity
+
         if dv.Magnitude > MAX_DV_PER_SAMPLE then
                 state.spikeUntil = currentTime + SPIKE_COOLDOWN
                 state.smoothedAcceleration = Vector3.zero
@@ -1179,6 +1393,7 @@ local function getTargetAcceleration(kinPart, targetVel, currentTime)
         end
 
         local rawAcceleration = dv / dt
+
         state.smoothedVelocity = state.smoothedVelocity:Lerp(targetVel, 1 - math.exp(-dt / VEL_TAU))
 
         local tau = ACCEL_TAU_BASE / math.clamp(State.PredReactivity or 1.0, 0.2, 3)
@@ -1192,7 +1407,7 @@ local function getTargetAcceleration(kinPart, targetVel, currentTime)
         return state.smoothedAcceleration, state.smoothedVelocity
 end
 
-local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletGravityVec, deltaTime, leadTime, zoomScale)
+local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletGravityVec, deltaTime, leadTime, zoomScale, autoMode)
         if typeof(bulletSpeed) ~= "number" or bulletSpeed <= 0 then return nil end
         if typeof(shooterPos) ~= "Vector3" then return nil end
         if typeof(bulletGravityVec) ~= "Vector3" then return nil end
@@ -1204,12 +1419,15 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
 
         local kinPart = getKinematicPart(targetPart)
         local targetAcc, targetVel = getTargetAcceleration(kinPart, kinPart.AssemblyLinearVelocity, currentTime)
-        local pingOffset = (State.PingCompensation and (getPing() * 0.5) or 0) + (leadTime or 0)
+        local initialDist = (targetPos - shooterPos).Magnitude
+        local isAuto = autoMode == true
+        local pingOffset = (State.PingCompensation and (getPing() * 0.5) or 0)
+                + (isAuto and math.min(leadTime or 0, initialDist / bulletSpeed) or (leadTime or 0))
 
         local accelLeadCap = MAX_ACCEL_LEAD / (zoomScale or getZoomScale(getCamera()))
-        local dropComp = math.clamp(State.DropComp or 100, 0, 200) * 0.01
+        local dropComp = isAuto and 1 or math.clamp(State.DropComp or 0, 0, 200) * 0.01
 
-        local strength = math.clamp(State.PredStrength or 1, 0, 2)
+        local strength = isAuto and 1 or math.clamp(State.PredStrength or 1, 0, 2)
         local LEAD_CAP = 60
         local function leadAt(totalT)
                 local lead = ((targetVel * totalT)
@@ -1228,7 +1446,6 @@ local function solveInterceptVector(shooterPos, targetPart, bulletSpeed, bulletG
         end
 
         local t0 = 0
-        local initialDist = (targetPos - shooterPos).Magnitude
         local t1 = (initialDist / bulletSpeed) + pingOffset
 
         if t1 <= 0 then return safeUnit(targetPos - shooterPos) end
@@ -1299,13 +1516,14 @@ local function getPredictedPosition(targetPart, shooterPos, deltaTime, leadTime,
         end
 
         local bulletSpeed = math.max(WeaponService.Speed, 1)
-        local aimDirection = solveInterceptVector(shooterPos, targetPart, bulletSpeed, lastGravVec, deltaTime, leadTime, zoomScale)
+        local autoMode = State.AutoBallistics and WeaponService.Measured == true or false
+        local aimDirection = solveInterceptVector(shooterPos, targetPart, bulletSpeed, lastGravVec, deltaTime, leadTime, zoomScale, autoMode)
         if aimDirection then return shooterPos + (aimDirection * AIM_PROJECTION_DIST) end
 
         return targetPos
 end
 -- ==========================================
--- 8. ESP SERVICE
+-- 8. ESP SERVICE (Throttle 30Hz, Ref-Cached)
 -- ==========================================
 local ESPService = {
         Cache = {},
@@ -1577,7 +1795,7 @@ do
                         Filled = false, Transparency = 0.7, NumSides = 3,
                         Remove = function() end
                 }
-                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด")
+                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด (ฟีเจอร์อื่นปกติ)")
         end
 end
 FOVCircle.Thickness = 1.5
@@ -1604,7 +1822,7 @@ local function hasActiveWeapon()
         return result
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + self-heal watchdog (ไม่มีการสังเคราะห์ input ใด ๆ)")
+log("INFO", "โหลดสำเร็จ — aimbot + ESP + self-heal watchdog (ไม่มี hook เกม — ไม่มีการสังเคราะห์ input ใด ๆ [Trigger Bot ถูกลบออกทั้งระบบตามคำขอตั้งแต่ v4.8] [v5.0: Auto Ballistics วัดกระสุนจริงแบบ real time])")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1681,6 +1899,11 @@ local function renderTick(deltaTime)
                 flickArmStart = nil
         end
 
+        local nowRefresh = os.clock()
+        if State.AutoBallistics and nowRefresh - lastMeasureRefresh > 0.25 then
+                lastMeasureRefresh = nowRefresh
+                WeaponService:RefreshMeasured()
+        end
         local zoomRaw = getZoomScale(camera)
         if not zoomSmoothed then
                 zoomSmoothed = zoomRaw
@@ -1747,6 +1970,7 @@ local function renderTick(deltaTime)
                 local targetPart = TargetService.TargetPart
         if TargetService.CurrentTarget and targetPart and targetPart.Parent then
                 local shooterPos = camera.CFrame.Position
+
                 local zoomScale = zoomSmoothed
                 local zoomSettle = math.min(zoomScale, 5)
                 local baseRate = (10 + State.Smoothness * 30) * zoomScale
@@ -1835,6 +2059,7 @@ local function renderTick(deltaTime)
                         prevErrDeg = errDeg
                 end
         end
+
 end
 
 local function connectRenderLoop()
@@ -1846,8 +2071,12 @@ end
 bootPhase("ต่อลูป render/ESP")
 connectRenderLoop()
 
+-- ==========================================
+-- 10. LOAD REPORT (v3.8 — สรุปสถานะการโหลด + watchdog + FPS meter)
+-- ==========================================
 setGlxStatus("โหลดครบทุกระบบ — พร้อมใช้")
 
+local stickyMsg, stickyUntil = nil, 0
 setStickyStatus = function(msg)
         stickyMsg = tostring(msg)
         stickyUntil = os.clock() + 6
@@ -1891,6 +2120,9 @@ do
         end))
 end
 
+-- ==========================================
+-- 11. SELF-TEST (v3.8 — ทดสอบ pure functions ตาม edge case)
+-- ==========================================
 if G.Glx_SelfTest then
         local passed, failed = 0, 0
         local function expect(name, cond)
@@ -1905,8 +2137,10 @@ if G.Glx_SelfTest then
         expect("NaN vector ถูกปฏิเสธ", isFiniteVec3(Vector3.new(0 / 0, 1, 1)) == false)
         expect("Inf vector ถูกปฏิเสธ", isFiniteVec3(Vector3.new(math.huge, 0, 0)) == false)
         expect("vector ปกติผ่าน", isFiniteVec3(Vector3.new(1, -2, 3)) == true)
+
         expect("unit ของเวกเตอร์ยาว 0 = nil", safeUnit(Vector3.zero) == nil)
         expect("unit คงทิศเดิม", safeUnit(Vector3.new(3, 0, 0)):Dot(Vector3.xAxis) > 0.99)
+
         expect("zoom scale FOV 70 = 1", getZoomScale({ FieldOfView = 70 }) == 1)
         expect("zoom scale ถูกเพดานที่ 8", getZoomScale({ FieldOfView = 0.1 }) == 8)
 
@@ -1917,6 +2151,7 @@ if G.Glx_SelfTest then
         local dir = solveInterceptVector(
                 Vector3.zero, fakeTarget, 5000, Vector3.new(0, -196.2, 0), 1 / 60, 0, 1)
         expect("ยิงตรงเป้านิ่ง = ทิศเกือบ +X", dir ~= nil and math.abs(dir.X - 1) < 0.01)
+
         expect("bulletSpeed <= 0 = nil",
                 solveInterceptVector(Vector3.zero, fakeTarget, 0, Vector3.new(0, -196.2, 0), 1 / 60, 0, 1) == nil)
 
@@ -1939,15 +2174,33 @@ if G.Glx_SelfTest then
         expect("มุมทิศเดียวกัน = 0°", angleBetweenDeg(Vector3.xAxis, Vector3.xAxis) < 1e-9)
         expect("มุมตั้งฉาก = 90°", math.abs(angleBetweenDeg(Vector3.xAxis, Vector3.yAxis) - 90) < 1e-9)
 
-        expect("settle ขอบโซน = 1", settleAlphaFactor(1.6, 1.6, 4) == 1)
+        expect("settle ขอบโซน = 1 (ไม่กระตุก)", settleAlphaFactor(1.6, 1.6, 4) == 1)
         expect("settle นอกโซน = 1", settleAlphaFactor(2.0, 1.6, 4) == 1)
         expect("settle ลึกซูม 4x = นุ่มกว่า hip", settleAlphaFactor(0.02, 1.6, 4) < 0.2)
-        expect("settle ไม่ซูม = พฤติกรรมเดิม",
+        expect("settle ไม่ซูม = พฤติกรรม v3.9 เดิม (0.3+0.7r)",
                 math.abs(settleAlphaFactor(0.2, 0.4, 1) - 0.65) < 1e-9)
+
+        expect("median คี่", median({ 3, 1, 2 }) == 2)
+        expect("median คู่", median({ 4, 1, 3, 2 }) == 2.5)
+        local flatTrack = {
+                { t = 0.0, pos = Vector3.new(0, 0, 0) }, { t = 0.1, pos = Vector3.new(10, 0, 0) },
+                { t = 0.2, pos = Vector3.new(20, 0, 0) }, { t = 0.3, pos = Vector3.new(30, 0, 0) }
+        }
+        local fitFlat = fitBallistics(flatTrack)
+        expect("fit วิถีตรง: speed 100 g 0",
+                fitFlat ~= nil and math.abs(fitFlat.Speed - 100) < 1 and fitFlat.Gravity == 0)
+        local dropTrack = {
+                { t = 0.0, pos = Vector3.new(0, 0, 0) }, { t = 0.1, pos = Vector3.new(10, -0.4905, 0) },
+                { t = 0.2, pos = Vector3.new(20, -1.962, 0) }, { t = 0.3, pos = Vector3.new(30, -4.4145, 0) }
+        }
+        local fitDrop = fitBallistics(dropTrack)
+        expect("fit วิถีตก: g ~98.1", fitDrop ~= nil and math.abs(fitDrop.Gravity - 98.1) < 0.5)
+        expect("fit จุดน้อย/ชิ้นนิ่ง = ปฏิเสธ",
+                fitBallistics({ { t = 0, pos = Vector3.zero }, { t = 0.1, pos = Vector3.new(5, 0, 0) } }) == nil)
 
         log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
 end
 
 bootPhase("done")
-log("INFO", "boot complete — โค้ดถึงบรรทัดสุดท้ายครบ")
--- [GLX v4.9 EOF]
+log("INFO", "boot complete — โค้ดถึงบรรทัดสุดท้ายครบ (ถ้าปุ่ม Glx ยังไม่ขึ้น = executor แสดง ScreenGui ไม่ได้ ลองรีเข้าเกมแล้วรันใหม่ หรือปิดสคริปต์อื่นเช่น IY/Dex ที่อาจชนกัน)")
+-- [GLX v5.0 EOF]
