@@ -74,7 +74,9 @@ task.delay(8, function()
         if boot.phase == "done" then return end
         local stuckAt = boot.phase
         warn("[GLX v4.7] [BOOT] โหลดไม่จบภายใน 8 วิ — ค้างที่ขั้น: " .. stuckAt
-                .. " — เปิด console อ่าน error สีแดงบรรทัดสุดท้ายแล้วส่งมาให้")
+                .. " — เปิด console อ่าน error สีแดงบรรทัดสุดท้ายแล้วส่งมาให้ (ถ้า console ไม่มี"
+                .. " [GLX v4.7] เลย = สคริปต์ไม่ได้ถูกรันจริง: วางไม่ครบ/executor ไม่ inject —"
+                .. " ท้ายที่วางต้องจบด้วย [GLX v4.7 EOF])")
         pcall(function()
                 if Drawing == nil then return end
                 local beacon = Drawing.new("Text")
@@ -155,6 +157,7 @@ end
 
 function CleanupManager:CleanAll()
         G.Glx_Running = false
+
         for _, conn in pairs(self.Connections) do pcall(conn.Disconnect, conn) end
         for _, inst in pairs(self.Instances) do pcall(inst.Destroy, inst) end
         for _, draw in pairs(self.Drawings) do pcall(draw.Remove, draw) end
@@ -238,6 +241,7 @@ local TRIGGER_GAP = 0.07
 local TRIGGER_RADIUS_DEFAULT = 14
 
 local function getCamera() return Workspace.CurrentCamera end
+
 local DEFAULT_FOV = 70
 
 local function getZoomScale(camera)
@@ -295,7 +299,10 @@ local function screenDistSq(camera, worldPos, screenCenter)
         return dx * dx + dy * dy
 end
 
-local WeaponService, setStickyStatus, toggleTriggerBot
+local WeaponService
+local setStickyStatus
+local toggleTriggerBot
+
 local setStatusFn = nil
 local function setGlxStatus(msg)
         log("INFO", msg)
@@ -348,7 +355,7 @@ ScreenGui.Name = "Glx_UI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.DisplayOrder = 999999
 if not parentGuiAnywhere(ScreenGui) then
-        log("ERROR", "ใส่ UI ลงเกมไม่ได้")
+        log("ERROR", "ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด) — UI จะไม่แสดง")
 end
 CleanupManager:AddInstance("MainUI", ScreenGui)
 bootPhase("โครง UI พร้อม")
@@ -760,7 +767,6 @@ createToggle("Weapon Check", State.WeaponCheck, function(v)
 end)
 
 setGlxStatus("UI พร้อม — กำลังโหลดระบบเกม...")
-
 -- ==========================================
 -- 4. WEAPON SERVICE (Cached Weapon Stats)
 -- ==========================================
@@ -872,6 +878,7 @@ end
 -- 5. VISIBILITY SERVICE (Reuse RaycastParams)
 -- ==========================================
 local VisibilityService = {}
+
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
 RayParams.IgnoreWater = true
@@ -992,7 +999,8 @@ end
 
 CleanupManager:AddConn("PlayerRemovingCaches", Players.PlayerRemoving:Connect(function(player)
         PlayerCache[player] = nil
-end)) 
+end))
+
 local TARGET_GRACE = 0.35
 local KEEP_HYSTERESIS = 1.35
 local ZOOM_TAU = 0.08
@@ -1134,7 +1142,6 @@ function TargetService:CheckSwitch(camera, screenCenter, scaledFOV)
                 self.TargetPart = bestPart
         end
 end
-
 -- ==========================================
 -- 7. ADVANCED PREDICTION ENGINE
 -- ==========================================
@@ -1366,6 +1373,7 @@ local function getPredictedPosition(targetPart, shooterPos, deltaTime, leadTime,
 
         return targetPos
 end
+
 -- ==========================================
 -- 8. ESP SERVICE (Throttle 30Hz, Ref-Cached)
 -- ==========================================
@@ -1617,7 +1625,6 @@ task.spawn(function()
                 end
         end
 end)
-
 -- ==========================================
 -- 9. MAIN CAMERA ENGINE
 -- ==========================================
@@ -1639,7 +1646,7 @@ do
                         Filled = false, Transparency = 0.7, NumSides = 3,
                         Remove = function() end
                 }
-                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด")
+                setGlxStatus("Drawing lib ไม่พบ — วง FOV ปิด (ฟีเจอร์อื่นปกติ)")
         end
 end
 FOVCircle.Thickness = 1.5
@@ -1666,7 +1673,7 @@ local function hasActiveWeapon()
         return result
 end
 
-log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog")
+log("INFO", "โหลดสำเร็จ — aimbot + ESP + trigger bot + self-heal watchdog (ไม่มี hook เกม — input สังเคราะห์เฉพาะคลิกของ Trigger Bot [v4.2: มือถืองด VirtualInputManager กันเกมปิดเอง], default OFF — แตะปุ่มลอย TRG หรือกด T เปิด)")
 
 local flickUntil = 0
 local flickArmStart = nil
@@ -1686,6 +1693,9 @@ local prevDesiredDir = nil
 local desSmoothed = 0
 local lastAimWriteClock = 0
 
+-- ==========================================
+-- [v4.0] TRIGGER BOT
+-- ==========================================
 local IS_TOUCH = false
 pcall(function()
         IS_TOUCH = UserInputService.TouchEnabled == true
@@ -1763,7 +1773,7 @@ if type(G.GLX_TRIGGER_BACKEND) == "string" then
 end
 triggerBackendQueue = backendOrder(IS_TOUCH, forcedBackend)
 if not pickNextBackend(IS_TOUCH and "โหมดมือถือ — งด VirtualInputManager" or nil) then
-        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก")
+        log("WARN", "Trigger Bot: ไม่พบ backend ส่งคลิก (VirtualUser/mouse1press/VIM) — ฟีเจอร์นี้ใช้ไม่ได้ ระบบอื่นปกติ")
 end
 
 local function triggerDecision(now, onTarget, pressed, pressStart, lastRelease)
@@ -1786,7 +1796,7 @@ local function triggerBackendExhausted(contextMsg)
         State.TriggerBot = false
         triggerBackendQueue = backendOrder(IS_TOUCH, State.TriggerBackend)
         if updateTriggerFloatVisual then updateTriggerFloatVisual() end
-        log("ERROR", "Trigger Bot: " .. contextMsg)
+        log("ERROR", "Trigger Bot: " .. contextMsg .. " — ปิด trigger (แตะ TRG จะลองชุด backend ใหม่)")
         if setStickyStatus then setStickyStatus("trigger bot: " .. contextMsg) end
 end
 
@@ -1805,7 +1815,7 @@ toggleTriggerBot = function(source)
         State.TriggerBot = not State.TriggerBot
         if updateTriggerFloatVisual then updateTriggerFloatVisual() end
         if State.TriggerBot and firePress == nil then
-                log("WARN", "Trigger Bot ON แต่ไม่มี backend ส่งคลิก")
+                log("WARN", "Trigger Bot ON แต่ไม่มี backend ส่งคลิก — ยิงไม่ได้ (ดู WARN ตอนโหลดสคริปต์)")
                 if setStickyStatus then setStickyStatus("trigger bot: ไม่มี backend ส่งคลิก") end
         end
         log("INFO", "Trigger Bot " .. (State.TriggerBot and "ON" or "OFF") .. " (" .. source .. ")")
@@ -1899,7 +1909,8 @@ CleanupManager:AddConn("TriggerKeybind", UserInputService.InputBegan:Connect(fun
         if input.KeyCode == wantKey then
                 toggleTriggerBot("toggle ด้วยปุ่ม " .. wantKey.Name)
         end
-end)) 
+end))
+
 local lastRenderTick = os.clock()
 local function renderTick(deltaTime)
         local camera = getCamera()
@@ -2222,7 +2233,7 @@ if G.Glx_SelfTest then
                 table.concat(backendOrder(true, "Auto"), ",") == "VirtualUser,Press")
         expect("Auto PC = Press → VIM → VirtualUser",
                 table.concat(backendOrder(false, "Auto"), ",") == "Press,VIM,VirtualUser")
-        expect("บังคับ VIM = ได้ตามสั่ง",
+        expect("บังคับ VIM = ได้ตามสั่ง (รับความเสี่ยงเอง)",
                 table.concat(backendOrder(true, "VIM"), ",") == "VIM")
         expect("บังคับ Press = Press เดียว",
                 table.concat(backendOrder(false, "Press"), ",") == "Press")
@@ -2239,15 +2250,15 @@ if G.Glx_SelfTest then
         expect("มุมทิศเดียวกัน = 0°", angleBetweenDeg(Vector3.xAxis, Vector3.xAxis) < 1e-9)
         expect("มุมตั้งฉาก = 90°", math.abs(angleBetweenDeg(Vector3.xAxis, Vector3.yAxis) - 90) < 1e-9)
 
-        expect("settle ขอบโซน = 1", settleAlphaFactor(1.6, 1.6, 4) == 1)
+        expect("settle ขอบโซน = 1 (ไม่กระตุก)", settleAlphaFactor(1.6, 1.6, 4) == 1)
         expect("settle นอกโซน = 1", settleAlphaFactor(2.0, 1.6, 4) == 1)
         expect("settle ลึกซูม 4x = นุ่มกว่า hip", settleAlphaFactor(0.02, 1.6, 4) < 0.2)
-        expect("settle ไม่ซูม = พฤติกรรมเดิม",
+        expect("settle ไม่ซูม = พฤติกรรม v3.9 เดิม (0.3+0.7r)",
                 math.abs(settleAlphaFactor(0.2, 0.4, 1) - 0.65) < 1e-9)
 
         log("INFO", ("self-test: %d passed, %d failed"):format(passed, failed))
 end
 
 bootPhase("done")
-log("INFO", "boot complete — โค้ดถึงบรรทัดสุดท้ายครบ")
+log("INFO", "boot complete — โค้ดถึงบรรทัดสุดท้ายครบ (ถ้าปุ่ม Glx ยังไม่ขึ้น = executor แสดง ScreenGui ไม่ได้ ลองรีเข้าเกมแล้วรันใหม่ หรือปิดสคริปต์อื่นเช่น IY/Dex ที่อาจชนกัน)")
 -- [GLX v4.7 EOF]
