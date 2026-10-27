@@ -1,123 +1,6 @@
 -- Luau | glx_aimbot_v3_10.lua | Roblox executor (Synapse-style env)
 -- =====================================================================
--- GLX ADVANCED PREDICTION AIMBOT & ESP (v3.10 — PERF BUILD)
--- - [v3.10] ตรวจบั๊ก + ลดทรัพยากรสิ้นเปลือง (audit รอบสาม) — 6 จุด:
---     (1) [HIGH] watchdog ฟื้น loop แบบ "ติดซ้อน" — เกมย่อ/สลับหน้าต่าง RenderStepped พัก
---         แต่ Heartbeat (watchdog) ยังวิ่ง = ทุกวินาทีติด RenderStepped conn ใหม่ ทั้งที่
---         ตัวเก่ายังมีชีวิต (AddConn แค่แทนชื่อในทะเบียน ไม่ได้ฆ่า callback เก่า)
---         กลับมาเต็มจอ = aim loop ซ้อนกอง N ตัวหมุนกล้องสู้กันเอง + CPU ×N
---         → เช็ค conn เดิมยัง Connected ก่อนติดใหม่ (ทั้ง aim loop และ ESP loop)
---     (2) [HIGH] ปิด ESP ทั้งสอง toggle แล้วป้ายค้างบนจอ — v3.9 เพิ่ม early-return trong
---         ESP heartbeat ตอน ESP ปิดทั้งคู่ ทำให้ไม่มีใครเก็บ Highlight/NameTag เดิม
---         (สีค้างจน respawn) → ปิด toggle ไหน เก็บป้ายประเภทนั้นทันที (clearESPVisuals)
---     (3) [MED] กวาดป้ายกำพร้า "รอบสแกน" (ไม่มีเจ้าของเลย) ลบป้ายของคนที่ยังมีชีวิต —
---         เดิม not (owned and owned[inst]) เมื่อ owned=nil = true ทุกชิ้น → ลบทุก 5 วิ
---         แล้ว ProcessESP สร้างคืน = churn สร้าง/ทำลาย Instance วนตลอด
---     (4) [MED] เส้นทางเขียนแถบสถานะ 2 ทาง (setStickyStatus/setStatusFn) ข้ามทะเบียน
---         lastStatusText ของ FPS meter → ข้อความ sticky/error โดนทับก่อนครบอายุ
---         → รวมเขียนผ่าน applyStatusText จุดเดียว
---     (5) [PERF] ProcessESP ออกทันทีเมื่อ ESP ปิดทั้งคู่ — เดิมยัง GetPlayers +
---         isValidEnemy ต่อคนทุก tick ทั้งที่ผลลัพธ์ถูกทิ้ง (คู่กับข้อ 2)
---     (6) [PERF] EMA ความเร่ง: คำนวณตัวคูณ Lerp ของ velocity ครั้งเดียวต่อ sample —
---         เดิม math.exp(-dt/VEL_TAU) เรียกซ้ำสามจุดในสายเดียวกัน
---     (6b) [PERF] CheckVisibility: โดนใกล้จุดเล็ง < 3 ซม. = ถึงแล้ว → จบทันที
---         (ตัด IsDescendantOf + วง pierce ที่เหลือ — แผนที่ใส/รั้วบางจบเร็วขึ้นทั้งสาย)
--- - [v3.9] ตรวจบั๊ก + ลดทรัพยากรสิ้นเปลือง (ผล audit รอบสอง) — 10 จุด:
---     (1) [LEAK] CleanAll ไม่ปล่อย Glx_Cleanup → loop กวาด ESP/TargetStates ยังตื่นมา
---         ทำงานเปล่าทุก 5-10 วิ ตลอดไปหลัง unload — เคลียร์ identity ให้ loop ตายตามรอบ
---     (2) [PERF] FilterDescendantsInstances ถูก set ทุกครั้งที่ยิง ray (property ตัวนี้ copy
---         array ฝั่ง C++ ทุกครั้ง) → push ใหม่เฉพาะเมื่อส่วนผสม filter เปลี่ยนจริง
---     (3) [PERF] หน้าทางจับเป้า (Acquire/Keep/CheckSwitch) เทียบกำลังสองระยะแทน Vector2.new
---         + .Magnitude — ตัด alloc + sqrt ต่อผู้เล่นต่อเฟรม (พฤติกรรม/ผลเดิมทุกจุด)
---     (4) [PERF] KeepTarget รายงาน on/off-screen มาด้วย — ตัด WorldToViewportPoint ซ้ำใน
---         สาย grace (เดิม project จุดเดียวกัน 2 ครั้ง/เฟรมตอนเป้าล่อขอบวง)
---     (5) [PERF] ESP แคช Head + TagLabel ต่อ player — จบ FindFirstChild 30×2 ครั้ง/วิ/คน
---         (กัน ref เน่าด้วยเช็ค Parent ทุก tick เหมือนระบบ self-heal เดิม)
---     (6) [PERF] FPS meter เขียน StatusLabel.Text เฉพาะเมื่อข้อความเปลี่ยน + เมนูเปิด —
---         เดิมปล่อย property dirty ทุกวินาทีทั้งที่เมนูปิด/ค่าเดิม
---     (7) [PERF] วง FOV เขียน Position/Radius/Visible เฉพาะเฟรมที่ค่าเปลี่ยนจริง
---     (8) [PERF] TargetStates เป็น weak keys — entry ของ HRP ที่ถูกทำลายถูก GC เอง,
---         loop กวาดเดิมคงไว้เป็นตัวสำรอง
---     (9) [PERF] แคช ForceField ต่อ player 0.25 วิ — เดิม FindFirstChildOfClass ทุกครั้ง
---         ที่เช็คศัตรู (ต่อผู้เล่น/เฟรม) — spawn guard ยังจับได้ใน 0.25 วิ
---     (10) [BUG] UI callback (Auto Weapon Speed / Drop Mode / สไลเดอร์กระสุน) กัน
---          WeaponService nil — ไฟล์โหลดค้างครึ่งทางแล้วไปกดปุ่ม = error เงียบ ๆ ใน console
--- - [v3.8] ตรวจบั๊กรอบใหม่ทั้งไฟล์ (audit) — แก้ 12 จุด:
---     (1) [HIGH] WeaponCheck default false ตามคลุม v3.4 (เดิม true = บนเกมปืน viewmodel
---         เช่น Ground War aimbot เงียบตั้งแต่โหลด — อาการเดิมย้อนกลับมาผ่าน default)
---     (2) [HIGH] สลับ "Drop Value Mode: Multiplier" แล้วล้าง WeaponCache — เดิมปืนที่ถือ
---         อยู่คืนค่า speed/gravity เก่าจาก cache จนกว่าจะ re-equip = toggle เงียบ
---     (3) [MED] ลากปุ่ม "Glx" แล้วเมนูไม่เด้ง — enableDrag คืนตัวเช็ค "เพิ่งลาก" (ขยับ ≥6px)
---         ให้ click handler ข้าม (เดิมปล่อยมือบนปุ่ม = MouseButton1Click ยิง = เมนูสลับเอง)
---     (4) [MED] Target Part แบบ Random บน R6 — สุ่มเจอชื่อที่ rig ไม่มี (UpperTorso ฯลฯ)
---         = ล็อคที่รากทันที (เดิมเก็บชื่อที่ไม่มีจริง = re-roll ทุกเฟรม จุดเล็งเด้งรัว ๆ)
---     (5) [MED] วงจับเป้า (scaledFOV) scale ตามซูม — ตามคลุม "Zoom-aware ทุกตัวคุม"
---         (เดิมคงที่เชิงพิกเซล = ซูม 4x วงจับกว้างขึ้น 4 เท่าเชิงมุม จับเป้านอกจอกลาง ๆ)
---     (6) FlickSpeed fallback 140→90 ให้ตรง default (เดิม or 140 เป็นค่าตาย)
---     (7) FALLBACK_SPEED (3000) ใช้จริงใน Auto mode เมื่อไม่มีข้อมูลปืน (เดิมดิ่งไปอ่าน
---         State.BulletSpeed=5000 ทั้งที่คลุมบอก "fallback เดียวทั้งไฟล์") — lead ต่างเดิมเล็กน้อย
---     (8) วง FOV จริง set NumSides=64 (เดิมมีแต่ใน dummy — บาง executor วงเป็นรูปหลายเหลี่ยม)
---     (9) sweeper ของ TargetStates เช็ค identity Glx_Cleanup แทน Glx_Running — รอบใหม่
---         เซ็ต Glx_Running=true ทับก่อน loop เก่า wake = loop ซอมบี้เก่าไม่ตาย
---     (10) conn ลาก slider ลงทะเบียน CleanupManager + RemoveConn ตอนปล่อย (เดิมรั่วถ้า
---          unload กลางจับ) — เพิ่ม CleanupManager:RemoveConn()
---     (11) แก้คอมเมนต์ "เพดาน 70 °/s" ให้ตรงความจริง (70 = อัตรา exponential / time-constant,
---          ตัวกำหนดก้าวจริงคือ maxStepDps) — โค้ดไม่แก้ พฤติกรรมเดิม
---     (12) ESP NameTag โชว์ DisplayName (fallback Name)
--- - [v3.7] แก้อาการ "เป้าหนึบเกิน สลับย้ายเป้าหมายลำบาก" (v3.6 ลื่นแล้ว แต่ล็อคแน่นเกินไป) — 3 จุด:
---     (1) ตัววัดความเร็วมือ (userDps) มีจุดตายอีกฟาก: ตอนมือ "ลากสวน" แรงดึงของ aimbot
---         สูตร min(a,b) อ่าน |แรงดึง − มือ| ไม่ใช่ความเร็วมือจริง (ลากมือ 210°/s อ่านได้แค่ 30°/s)
---         → Free Steer / Drag Switch ไม่มีวันเข้าเงื่อนไข = กล้องดูดค้างเหมือนกาว สลับเป้าไม่ออก
---         → แก้: เทียบแกนหมุนของมือกับแกนแรงดึง — ลากสวน = เชื่อค่าความเร็วมือจริงทันที
---     (2) เพิ่ม toggle "Switch Assist" (default ON): ขณะล็อคเป้าอยู่ ถ้าชี้ใกล้ศัตรูอื่นชัดเจน
---         (ใกล้จุดเล็งกว่าเป้าเดิมเกือบ 2 เท่า และอยู่ในวง FOV + เช็คกำแพง) → สลับเป้าให้เองทันที
---         กล้องไหลข้ามไปแบบต่อเนื่องไม่กระตุก ไม่ต้องสะบัดจอ + กันเป้าเก่าดูดกลับ 0.3 วิ
---     (3) เกณฑ์ Free Steer ลด 45→30°/s — ลากเบา ๆ ก็ผ่อนแรงดึงตามมือ (วัดความเร็วมือจริงได้แล้ว)
--- - [v3.6] แก้ต่ออาการ "กระตุกเหมือน snap ตลอด" (v3.5 ยังกระตุก) — เจอบั๊กราก 2 จุด:
---     (1) userDps (ตัววัดความเร็วมือผู้เล่น) นับความเร็วกล้องที่ aimbot หมุนเองปนเข้าไปตอนเมาส์นิ่ง
---         → DragSwitch ตีความว่ากำลังสะบัดจอทุกเฟรมระหว่างไหล → ปล่อยล็อค+พัก 0.3 วิ วนลูป
---         = ไหล 2 เฟรม-แข็ง-ไหล-แข็ง ตลอดเวลา (ต้นตอ "ตัดภาพทีละฉาก" ตั้งแต่รุ่นก่อนด้วย)
---         → แก้: หักลบอิทธิพลตัวเองแบบไม่มีเงื่อนไข + สะบัดต้องค้าง ≥0.06 วิ ถึงเปิดหน้าต่างปล่อยล็อค
---     (2) เฟรมแรกหลังล็อค alpha×err = ก้าวใหญ่เฟรมเดียว (คลาด 30° = จุ๊บ ~20° = ภาพตัด)
---         → ใส่เพดานก้าวต่อเฟรม: คลาดมาก = ไหลความเร็วคงที่ ใกล้เป้าค่อย exponential — ไม่มีจุ๊บอีก
--- - [v3.5] รื้อระบบความเร็วการเล็ง — แก้อาการ "กล้องไต่ไปหาเป้าช้า ๆ แล้วดีดเป็นช่วง ๆ เหมือนตัดภาพ":
---     (1) ถอด Snap Angle ออกทั้งระบบ (สไลเดอร์ + สูตร blend — ต้นตอกินมุมทีเดียวจบ),
---     (2) ถอด switch-ease cap (ไต่ช้า 0.15 วิ.แรกหลังล็อคแล้วเร่งเต็มสปีด = ความเร็วสะดุดกลางทาง),
---     (3) เหลือ rate เดียวต่อเนื่อง: rate = base(Aim Speed) + error×Catch-Up Boost เพดาน 70°/s —
---     ยิ่งคลาดมากยิ่งไล่ไวขึ้นแบบไหล ไม่มี threshold/ไม่มีจังหวะเปลี่ยนโหมด = กล้องไหลสมูทถึงเป้าเสมอ
---     (สไลเดอร์ Smoothness เปลี่ยนชื่อเป็น "Aim Speed" — สูงขึ้น = เร็วขึ้น, ต่ำลง = นุ่มช้าขึ้น)
--- - [Glx] รีแบรนด์ UI ทั้งสคริปต์: SNYX/SnyX → GLX/Glx — ปุ่มเปิดเมนู, ชื่อ ScreenGui
---     (Glx_UI), หัวเมนู GLX ADVANCED SYSTEM, ข้อความ console/แถบสถานะ และตัวแปร getgenv
---     (Glx_Running / Glx_Cleanup) + เคลียร์รอบเก่าชื่อ SnyX_* จากเวอร์ชั่นก่อนหน้าให้ด้วย
---     + ธีมสีใหม่ "GLX เขียวนีออน" (0,255,153 แทนม่วงเดิม) ทั้งปุ่ม/ขอบ/สไลเดอร์/ปุ่มโหมด/แถบสถานะ
---     + แก้ตัวอักษร "Glx" บนปุ่มเบลอ: ตำแหน่ง UI ปัดเป็นพิกเซลเต็ม (ตำแหน่ง scale ทศนิยม =
---       subpixel rendering คือต้นตอเบลอ) + ฟอนต์ GothamBold + TextSize 14→18 + ขอบ 1.5→2
--- - [v3.4] แก้อาการ "เล่นไปสักพัก ESP หาย + เป้าที่เคยล็อคได้กลับล็อคไม่ได้" — 4 ชั้น:
---     (1) ลูกรั่ว Highlight: ผู้เล่นตาย/เกิดใหม่ = ป้าย ESP ค้างบนศพใน workspace สะสมจนถึง
---         ลิมิต 31 Highlight ที่จอวาดได้ → ป้ายใหม่ไม่ถูกวาดเงียบ ๆ = ESP หายทั้งระบบ
---         → ทำลายป้ายของ entry เก่าทุกครั้ง + กวาดป้ายกำพร้าทุก 5 วิ
---     (2) cache ผู้เล่นเน่า: เกมสลับ Humanoid/RootPart ในตัวละครเดิม = ref เก่าตายค้าง
---         → คนนั้นล็อคไม่ได้ตลอด — getComponents ตรวจ ref เน่าแล้วหาใหม่เองทุกเฟรม (self-heal)
---     (3) watchdog: loop ESP/aim ตายเงียบ ๆ = ฟื้น connection เองใน ≤2 วิ + pcall ครอบทุก tick
---         (ผู้เล่นประหลาดตัวเดียวพังไม่ลากทั้งระบบ) + error ขึ้นแถบสถานะ 6 วิ
---     (4) Weapon Check default OFF — ปืน viewmodel (Ground War) ไม่ใช่ Tool รีรันแล้วลืมกด
---         toggle = aimbot เงียบ; เกมที่ปืนเป็น Tool ค่อยเปิดเอง
--- - [v3.3] ถอด Silent Aim และ Trigger Bot ออกจากสคริปต์ทั้งหมด (ตามคำขอ) — สิ่งที่หายไปพร้อมกัน:
---     hook ทุกชนิดที่ครอบเกม (__namecall / hookfunction Raycast / __index เมาส์)
---     การสังเคราะห์ input ทุกชนิด (VirtualUser Button1Down/Up, mouse1press/release)
---     UI ของทั้งสองระบบ + โปรไฟล์เกม Ground War + internalRaycast (ไม่มี hook ให้ต้องเลี่ยงแล้ว)
---   ผลลัพธ์: สคริปต์ไม่ยุ่ง ray และ input ของเกมแม้แต่บรรทัดเดียว — ต้นตออาการ
---   "แลคมาก + ปืนยิงกระสุนไม่ออก + เกมปิดเอง" ถูกถอนรากจากตัวสคริปต์โดยสิ้นเชิง
--- - ฟีเจอร์ที่เหลือครบ: aimbot prediction (intercept + bullet drop/ping), continuous glide,
---   drag-to-switch, Switch Assist, Free Steer, Lag Comp, Zoom Adapt, wall/team/weapon check,
---   ESP ทุกฟีเจอร์, FOV circle, FPS meter ในแถบสถานะ
--- - [v3.2] toggle "Weapon Check" — ปืนไม่ใช่ Tool (viewmodel เช่น Ground War) = ปิด toggle
---   นี้เพื่อให้ aimbot เล็งได้ + FPS meter ในแถบสถานะ
--- - [v3.1] UI สร้างก่อนระบบอื่นทั้งหมด = เมนูขึ้นเสมอ + แถบสถานะบอกจุดโหลด + ล้างรอบเก่า
---   pcall ทุกรายการ + LocalPlayer รอ spawn สูงสุด 10s
--- - [v2.7] ล็อคไวขึ้น + สลับเป้าไม่ติดเหนียว + free steer + switch ease
--- - [v2.6] hysteresis วงเก็บ 1.35× / grace 0.25s / velocity+zoom EMA / hitch guard
--- - [v2.4] Zoom-aware ทุกตัวคุม / Lag Comp อยู่ในตัว solve
+-- GLX ADVANCED PREDICTION AIMBOT & ESP (v3.10 → v3.11 PERF FOR DELTA)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -125,6 +8,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
+
 if not LocalPlayer then
         for _ = 1, 100 do
                 task.wait(0.1)
@@ -139,6 +23,9 @@ end
 
 local FALLBACK_SPEED = 3000
 
+-- ==========================================
+-- 1. CLEANUP MANAGER (Complete Lifecycle)
+-- ==========================================
 local CleanupManager = {
         Connections = {},
         Instances = {},
@@ -202,6 +89,9 @@ end
 getgenv().Glx_Cleanup = CleanupManager
 getgenv().Glx_Running = true
 
+-- ==========================================
+-- 2. STATE (Global Configuration)
+-- ==========================================
 local State = {
         Aimbot = true,
         TeamCheck = true,
@@ -236,12 +126,21 @@ local function getZoomScale(camera)
         return math.clamp(DEFAULT_FOV / math.max(camera.FieldOfView, 1), 1, 5)
 end
 
+local cachedPing, pingUntil = 0.025, 0
 local function getPing()
         if not LocalPlayer then return 0.025 end
-        local success, ping = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
-        return (success and type(ping) == "number") and ping or 0.025
+        local now = os.clock()
+        if now >= pingUntil then
+                local success, ping = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
+                cachedPing = (success and type(ping) == "number") and ping or 0.025
+                pingUntil = now + 0.5
+        end
+        return cachedPing
 end
 
+-- ==========================================
+-- 3. MATH HELPERS
+-- ==========================================
 local function isFiniteVec3(v)
         if typeof(v) ~= "Vector3" then return false end
         local x, y, z = v.X, v.Y, v.Z
@@ -259,10 +158,13 @@ local function safeUnit(v3)
         return isFiniteVec3(unit) and unit or nil
 end
 
-local WeaponService
-local ESPService
-local clearESPVisuals
-local setStickyStatus
+-- ==========================================
+-- 3.5 FORWARD DECLARATIONS + LOAD STATUS
+-- ==========================================
+local WeaponService            
+local ESPService               
+local clearESPVisuals          
+local setStickyStatus          
 
 local setStatusFn = nil
 local function setGlxStatus(msg)
@@ -272,6 +174,9 @@ local function setGlxStatus(msg)
         end
 end
 
+-- ==========================================
+-- 3.6 UI CONSTRUCTION
+-- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Glx_UI"
 ScreenGui.ResetOnSpawn = false
@@ -294,9 +199,6 @@ do
                 local okP = pcall(function() ScreenGui.Parent = par end)
                 if okP and ScreenGui.Parent ~= nil then break end
         end
-end
-if not ScreenGui.Parent then
-        warn("[GLX v3.10] ใส่ UI ลงเกมไม่ได้ (CoreGui/PlayerGui ถูกปิด) — UI จะไม่แสดง")
 end
 CleanupManager:AddInstance("MainUI", ScreenGui)
 
@@ -373,7 +275,6 @@ local function enableDrag(handle, target)
                         )
                 end
         end))
-
         return function() return wasDragged end
 end
 
@@ -596,7 +497,6 @@ local function createSlider(text, min, max, default, step, callback)
                 if input.UserInputType == Enum.UserInputType.MouseButton1
                         or input.UserInputType == Enum.UserInputType.Touch then
                         dragging = true
-
                         local function update(inp)
                                 local ratio = math.clamp(
                                         (inp.Position.X - sliderBar.AbsolutePosition.X)
@@ -624,11 +524,7 @@ local function createSlider(text, min, max, default, step, callback)
                                 if relInp.UserInputType == Enum.UserInputType.MouseButton1
                                         or relInp.UserInputType == Enum.UserInputType.Touch then
                                         dragging = false
-                                        CleanupManager:RemoveConn(gestureId .. "Move")
-                                        CleanupManager:RemoveConn(gestureId .. "End")
-                                end
-                        end)
-                        CleanupManager:AddConn(gestureId .. "End", relConn)
+                                        CleanupManager:AddConn(gestureId .. "End", relConn)
                 end
         end)
 end
@@ -638,8 +534,10 @@ createModeSelector("Target Part", { "Head", "Torso", "Random" }, 1, function(v) 
 createToggle("Show FOV Circle", State.ShowFOV, function(v) State.ShowFOV = v end)
 createToggle("Team Check", State.TeamCheck, function(v) State.TeamCheck = v end)
 createToggle("Wall Check", State.WallCheck, function(v) State.WallCheck = v end)
+
 createToggle("Prediction Engine", State.Prediction, function(v) State.Prediction = v end)
 createToggle("Ping Compensation", State.PingCompensation, function(v) State.PingCompensation = v end)
+
 createToggle("Drop Value Mode: Multiplier", State.DropIsMultiplier, function(v)
         State.DropIsMultiplier = v
         if WeaponService then
@@ -647,10 +545,12 @@ createToggle("Drop Value Mode: Multiplier", State.DropIsMultiplier, function(v)
                 WeaponService:UpdateAuto()
         end
 end)
+
 createToggle("Auto Weapon Speed", State.AutoBulletSpeed, function(v)
         State.AutoBulletSpeed = v
         if WeaponService then WeaponService:UpdateAuto() end
 end)
+
 createToggle("ESP Wallhack", State.ESP, function(v)
         State.ESP = v
         if ESPService and clearESPVisuals and not v then clearESPVisuals(true, false) end
@@ -659,6 +559,7 @@ createToggle("ESP Username", State.ESPName, function(v)
         State.ESPName = v
         if ESPService and clearESPVisuals and not v then clearESPVisuals(false, true) end
 end)
+
 createSlider("Manual Bullet Speed", 500, 10000, State.BulletSpeed, 100, function(v)
         State.BulletSpeed = v
         if WeaponService then WeaponService:UpdateManual() end
@@ -669,15 +570,29 @@ createSlider("Manual Gravity", 0, 500, State.BulletGravity, 10, function(v)
 end)
 createSlider("Aim Speed", 0.05, 1, State.Smoothness, 0.05, function(v) State.Smoothness = v end)
 createSlider("Aimbot FOV Range", 50, 500, State.FOV, 10, function(v) State.FOV = v end)
-createSlider("Pred Reactivity", 0.2, 3, State.PredReactivity, 0.05, function(v) State.PredReactivity = v end)
-createSlider("Pred Max Slew (s/s)", 0.5, 10, State.PredMaxSlew, 0.5, function(v) State.PredMaxSlew = v end)
+
+createSlider("Pred Reactivity", 0.2, 3, State.PredReactivity, 0.05, function(v)
+        State.PredReactivity = v
+end)
+createSlider("Pred Max Slew (s/s)", 0.5, 10, State.PredMaxSlew, 0.5, function(v)
+        State.PredMaxSlew = v
+end)
+
 createToggle("Lag Comp", State.LagComp, function(v) State.LagComp = v end)
-createSlider("Catch-Up Boost", 0, 3, State.TrackBoost, 0.05, function(v) State.TrackBoost = v end)
+createSlider("Catch-Up Boost", 0, 3, State.TrackBoost, 0.05, function(v)
+        State.TrackBoost = v
+end)
+
 createToggle("Drag To Switch", State.DragSwitch, function(v) State.DragSwitch = v end)
 createToggle("Free Steer", State.FreeSteer, function(v) State.FreeSteer = v end)
 createToggle("Switch Assist", State.SwitchAssist, function(v) State.SwitchAssist = v end)
-createSlider("Flick Speed (°/s)", 60, 300, State.FlickSpeed, 5, function(v) State.FlickSpeed = v end)
-createToggle("Weapon Check", State.WeaponCheck, function(v) State.WeaponCheck = v end)
+createSlider("Flick Speed (°/s)", 60, 300, State.FlickSpeed, 5, function(v)
+        State.FlickSpeed = v
+end)
+
+createToggle("Weapon Check", State.WeaponCheck, function(v)
+        State.WeaponCheck = v
+end)
 
 setGlxStatus("UI พร้อม — กำลังโหลดระบบเกม...")
 -- ==========================================
@@ -795,6 +710,7 @@ end
 -- 5. VISIBILITY SERVICE (Reuse RaycastParams)
 -- ==========================================
 local VisibilityService = {}
+
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Exclude
 RayParams.IgnoreWater = true
@@ -817,7 +733,8 @@ function VisibilityService:CheckVisibility(targetCharacter, pierceCount, specifi
         local targetPos = targetPart.Position
         local direction = targetPos - origin
 
-        if direction.Magnitude < 0.05 then return true end
+        local distToTarget = direction.Magnitude
+        if distToTarget < 0.05 then return true end
 
         local maxPierces = pierceCount or 1
         local currentOrigin = origin
@@ -843,8 +760,7 @@ function VisibilityService:CheckVisibility(targetCharacter, pierceCount, specifi
 
                 if not okRay or not result then return true end
 
-                local hitDist = (result.Position - origin).Magnitude
-                local distToTarget = (targetPos - origin).Magnitude
+                local hitDist = result.Distance
                 if math.abs(hitDist - distToTarget) < 0.03 then return true end
 
                 local hitPart = result.Instance
@@ -927,12 +843,12 @@ end
 CleanupManager:AddConn("PlayerRemovingCaches", Players.PlayerRemoving:Connect(function(player)
         PlayerCache[player] = nil
 end))
-
 local TARGET_GRACE = 0.25
 local KEEP_HYSTERESIS = 1.35
 local ZOOM_TAU = 0.08
 local targetGraceUntil = 0
 local zoomSmoothed = nil
+local keepWallCheckUntil, keepWallVisible = 0, true
 
 local SWITCH_COOLDOWN = 0.30
 local switchAwayKey = nil
@@ -940,6 +856,9 @@ local switchCooldownUntil = 0
 local SWITCH_RATIO = 0.50
 local SWITCH_CHECK_INTERVAL = 0.05
 local lastSwitchCheck = 0
+local ACQUIRE_INTERVAL = 1 / 30
+local lastAcquireAt = 0
+
 -- ==========================================
 -- 6. TARGET SERVICE (State Machine)
 -- ==========================================
@@ -978,6 +897,8 @@ function TargetService:ReleaseTarget()
         self.TargetPart = nil
         self.LockedPartName = nil
         targetGraceUntil = 0
+        keepWallCheckUntil = 0
+        keepWallVisible = true
 end
 
 function TargetService:KeepTarget(camera, screenX, screenY, scaledFOV)
@@ -989,8 +910,13 @@ function TargetService:KeepTarget(camera, screenX, screenY, scaledFOV)
                 return false, false
         end
 
-        if State.WallCheck and not VisibilityService:CheckVisibility(target.Character, 1, part) then
-                return false, false
+        if State.WallCheck then
+                local nowWC = os.clock()
+                if nowWC >= (keepWallCheckUntil or 0) then
+                        keepWallCheckUntil = nowWC + (1 / 15)
+                        keepWallVisible = VisibilityService:CheckVisibility(target.Character, 1, part)
+                end
+                if not keepWallVisible then return false, false end
         end
 
         local screenPoint, onScreen = camera:WorldToViewportPoint(part.Position)
@@ -1095,6 +1021,8 @@ function TargetService:CheckSwitch(camera, screenX, screenY, scaledFOV)
                 self.TargetPart = bestPart
                 self.LockedPartName = nil
                 targetGraceUntil = 0
+                keepWallCheckUntil = 0
+                keepWallVisible = true
         end
 end
 
@@ -1104,6 +1032,7 @@ end
 local TargetStates = setmetatable({}, { __mode = "k" })
 local MAX_SAMPLE_DT = 0.1
 local MAX_PREDICTION_TIME = 5.0
+
 local MAX_DV_PER_SAMPLE = 35
 local SPIKE_COOLDOWN = 0.15
 local MAX_ACCEL = 200
@@ -1538,7 +1467,7 @@ local function connectESP()
                         else
                                 espErrStreak += 1
                                 if espErrStreak == 5 then
-                                        warn("[GLX v3.10] ESP tick error: " + tostring(err))
+                                        warn("[GLX v3.10] ESP tick error: " .. tostring(err))
                                         if setStickyStatus then
                                                 setStickyStatus("ESP error: " .. tostring(err):sub(1, 40))
                                         end
@@ -1579,6 +1508,7 @@ task.spawn(function()
                 end
         end
 end)
+
 -- ==========================================
 -- 9. MAIN CAMERA ENGINE
 -- ==========================================
@@ -1635,31 +1565,45 @@ local function renderTick(deltaTime)
         local camera = getCamera()
         if not camera then return end
 
-        local userLook = camera.CFrame.LookVector
-        local dtSafe = math.max(deltaTime, 1e-4)
-        local userDps = math.huge
-        if prevReadLook then
-                local uDot = math.clamp(userLook:Dot(prevReadLook), -1, 1)
-                local uDeg = math.deg(math.acos(uDot))
-                if uDeg > 0.05 then userDps = uDeg / dtSafe end
-        end
-        if lastWriteLook then
-                local wDot = math.clamp(userLook:Dot(lastWriteLook), -1, 1)
-                local wDeg = math.deg(math.acos(wDot))
-                local againstPull = false
-                if prevReadLook then
-                        local pullAxis = prevReadLook:Cross(lastWriteLook)
-                        local handAxis = lastWriteLook:Cross(userLook)
-                        againstPull = pullAxis:Dot(handAxis) < 0
-                end
-                if againstPull or wDeg / dtSafe < userDps then
-                        userDps = wDeg / dtSafe
-                end
-        end
-        if userDps == math.huge then userDps = 0 end
-        prevReadLook = userLook
-        lastWriteLook = nil
+        local aiming = State.Aimbot and hasActiveWeapon()
+        local userDps = 0
         local nowClock = os.clock()
+        if not aiming then
+                prevReadLook = camera.CFrame.LookVector
+                lastWriteLook = nil
+                if TargetService.CurrentTarget then TargetService:ReleaseTarget() end
+                prevErrDeg = nil
+                steerInfluence = 1
+                steerHoldStart = nil
+                flickArmStart = nil
+        end
+
+        if aiming then
+                local userLook = camera.CFrame.LookVector
+                local dtSafe = math.max(deltaTime, 1e-4)
+                userDps = math.huge
+                if prevReadLook then
+                        local uDot = math.clamp(userLook:Dot(prevReadLook), -1, 1)
+                        local uDeg = math.deg(math.acos(uDot))
+                        if uDeg > 0.05 then userDps = uDeg / dtSafe end
+                end
+                if lastWriteLook then
+                        local wDot = math.clamp(userLook:Dot(lastWriteLook), -1, 1)
+                        local wDeg = math.deg(math.acos(wDot))
+                        local againstPull = false
+                        if prevReadLook then
+                                local pullAxis = prevReadLook:Cross(lastWriteLook)
+                                local handAxis = lastWriteLook:Cross(userLook)
+                                againstPull = pullAxis:Dot(handAxis) < 0
+                        end
+                        if againstPull or wDeg / dtSafe < userDps then
+                                userDps = wDeg / dtSafe
+                        end
+                end
+                if userDps == math.huge then userDps = 0 end
+                prevReadLook = userLook
+                lastWriteLook = nil
+        end
 
         if State.DragSwitch and userDps > (State.FlickSpeed or 90) then
                 if not flickArmStart then flickArmStart = nowClock end
@@ -1670,11 +1614,15 @@ local function renderTick(deltaTime)
                 flickArmStart = nil
         end
 
-        local zoomRaw = getZoomScale(camera)
-        if not zoomSmoothed then
-                zoomSmoothed = zoomRaw
+        if aiming then
+                local zoomRaw = getZoomScale(camera)
+                if not zoomSmoothed then
+                        zoomSmoothed = zoomRaw
+                else
+                        zoomSmoothed += (zoomRaw - zoomSmoothed) * (1 - math.exp(-deltaTime / ZOOM_TAU))
+                end
         else
-                zoomSmoothed += (zoomRaw - zoomSmoothed) * (1 - math.exp(-deltaTime / ZOOM_TAU))
+                zoomSmoothed = nil
         end
 
         local vp = camera.ViewportSize
@@ -1695,13 +1643,7 @@ local function renderTick(deltaTime)
                 FOVCircle.Visible = false
         end
 
-        if not State.Aimbot or not hasActiveWeapon() then
-                if TargetService.CurrentTarget then TargetService:ReleaseTarget() end
-                prevErrDeg = nil
-                steerInfluence = 1
-                steerHoldStart = nil
-                return
-        end
+        if not aiming then return end
 
         if State.DragSwitch and nowClock < flickUntil then
                 if TargetService.CurrentTarget then
@@ -1737,7 +1679,8 @@ local function renderTick(deltaTime)
                 end
         end
 
-        if not TargetService.CurrentTarget then
+        if not TargetService.CurrentTarget and nowClock - lastAcquireAt >= ACQUIRE_INTERVAL then
+                lastAcquireAt = nowClock
                 TargetService:AcquireTarget(camera, screenCX, screenCY, scaledFOV)
         end
 
